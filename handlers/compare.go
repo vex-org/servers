@@ -77,6 +77,86 @@ type LangResult struct {
 	Error         string  `json:"error,omitempty"`
 }
 
+// PresetCompareRequest accepts pre-written code for each language (no AI needed)
+type PresetCompareRequest struct {
+	VexCode  string `json:"vex_code"`
+	GoCode   string `json:"go_code"`
+	RustCode string `json:"rust_code"`
+	ZigCode  string `json:"zig_code"`
+	OptLevel string `json:"opt_level,omitempty"`
+}
+
+// POST /api/website/compare-preset — runs pre-written code (no AI transpilation)
+func ComparePreset(c fiber.Ctx) error {
+	var req PresetCompareRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+
+	if req.VexCode == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "vex_code is required"})
+	}
+
+	results := make(map[string]*LangResult)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	type langJob struct {
+		name string
+		code string
+		run  func(string, string) (*sandbox.RunResult, error)
+	}
+
+	jobs := []langJob{
+		{"vex", req.VexCode, executor.RunVex},
+	}
+	if req.GoCode != "" {
+		jobs = append(jobs, langJob{"go", req.GoCode, executor.RunGo})
+	}
+	if req.RustCode != "" {
+		jobs = append(jobs, langJob{"rust", req.RustCode, executor.RunRust})
+	}
+	if req.ZigCode != "" {
+		jobs = append(jobs, langJob{"zig", req.ZigCode, executor.RunZig})
+	}
+
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j langJob) {
+			defer wg.Done()
+			r, err := j.run(j.code, req.OptLevel)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil || r == nil {
+				results[j.name] = &LangResult{Error: "execution failed", Code: j.code}
+				return
+			}
+			if r.ExitCode != 0 {
+				errMsg := r.Stderr
+				if errMsg == "" {
+					errMsg = "compilation failed"
+				}
+				results[j.name] = &LangResult{Error: errMsg, Code: j.code}
+				return
+			}
+			results[j.name] = &LangResult{
+				TimeMs:        r.RunTimeMs,
+				CompileTimeMs: r.CompileTimeMs,
+				RunTimeMs:     r.RunTimeMs,
+				UserTimeMs:    r.UserTimeMs,
+				SysTimeMs:     r.SysTimeMs,
+				BinaryKB:      r.BinaryKB,
+				MemoryKB:      r.MemoryKB,
+				Code:          j.code,
+				Stdout:        r.Stdout,
+			}
+		}(j)
+	}
+
+	wg.Wait()
+	return c.JSON(fiber.Map{"results": results})
+}
+
 // POST /api/website/compare
 func Compare(c fiber.Ctx) error {
 	var req CompareRequest

@@ -80,6 +80,7 @@ func main() {
 	// Benchmark arena (stricter rate limit)
 	arena := api.Group("", middleware.RateLimit(5, 60))
 	arena.Post("/compare", handlers.Compare)
+	arena.Post("/compare-preset", handlers.ComparePreset)
 
 	// AI assistant
 	ai := api.Group("", middleware.RateLimit(20, 60))
