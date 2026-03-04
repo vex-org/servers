@@ -1,12 +1,62 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/vex-org/servers/sandbox"
 )
+
+// --- Transpilation Cache ---
+
+type cacheEntry struct {
+	code      string
+	createdAt time.Time
+}
+
+var (
+	transpileCache   = make(map[string]cacheEntry)
+	transpileCacheMu sync.RWMutex
+	cacheTTL         = 24 * time.Hour
+	cacheMaxSize     = 256
+)
+
+func cacheKey(vexCode, lang string) string {
+	h := sha256.Sum256([]byte(lang + ":" + vexCode))
+	return hex.EncodeToString(h[:16])
+}
+
+func cacheGet(key string) (string, bool) {
+	transpileCacheMu.RLock()
+	defer transpileCacheMu.RUnlock()
+	e, ok := transpileCache[key]
+	if !ok || time.Since(e.createdAt) > cacheTTL {
+		return "", false
+	}
+	return e.code, true
+}
+
+func cacheSet(key, code string) {
+	transpileCacheMu.Lock()
+	defer transpileCacheMu.Unlock()
+	// Evict oldest entries if cache is full
+	if len(transpileCache) >= cacheMaxSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range transpileCache {
+			if oldestKey == "" || v.createdAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.createdAt
+			}
+		}
+		delete(transpileCache, oldestKey)
+	}
+	transpileCache[key] = cacheEntry{code: code, createdAt: time.Now()}
+}
 
 type CompareRequest struct {
 	Code     string   `json:"code"`
@@ -146,8 +196,13 @@ func Compare(c fiber.Ctx) error {
 	})
 }
 
-// transpileViaAI uses Ollama to convert Vex code to another language
+// transpileViaAI uses AI to convert Vex code to another language (cached)
 func transpileViaAI(vexCode, targetLang string) (string, error) {
+	key := cacheKey(vexCode, targetLang)
+	if cached, ok := cacheGet(key); ok {
+		return cached, nil
+	}
+
 	prompt := "Convert this Vex code to idiomatic " + targetLang + ". " +
 		"Return ONLY the code, no markdown, no explanation.\n\n" + vexCode
 
@@ -155,5 +210,7 @@ func transpileViaAI(vexCode, targetLang string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	cacheSet(key, resp)
 	return resp, nil
 }
