@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -36,7 +37,15 @@ func main() {
 		Format: "${time} | ${status} | ${latency} | ${ip} | ${method} ${path}\n",
 	}))
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: []string{cfg.AllowedOrigin},
+		AllowOriginsFunc: func(origin string) bool {
+			for _, o := range cfg.AllowedOrigins() {
+				if o == origin {
+					return true
+				}
+			}
+			// Allow Vercel preview deployments
+			return strings.HasSuffix(origin, ".vercel.app")
+		},
 		AllowMethods: []string{"GET", "POST", "OPTIONS"},
 		AllowHeaders: []string{"Content-Type"},
 	}))

@@ -36,6 +36,17 @@ func Load() *Config {
 	}
 }
 
+func (c *Config) AllowedOrigins() []string {
+	origins := []string{c.AllowedOrigin}
+	// Always include www variant
+	if c.AllowedOrigin == "https://vex-lang.org" {
+		origins = append(origins, "https://www.vex-lang.org")
+	}
+	// Dev origins
+	origins = append(origins, "http://localhost:3334", "http://localhost:5173")
+	return origins
+}
+
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
