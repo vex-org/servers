@@ -99,7 +99,7 @@ func handleMCPToolCall(c fiber.Ctx, toolName string, args map[string]any) error 
 		if err := validateCode(code); err != nil {
 			return err
 		}
-		result, err := executor.RunVex(code)
+		result, err := executor.RunVex(code, "")
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "execution failed"})
 		}
@@ -113,7 +113,7 @@ func handleMCPToolCall(c fiber.Ctx, toolName string, args map[string]any) error 
 		if err := validateCode(code); err != nil {
 			return err
 		}
-		result, err := executor.EmitIR(code)
+		result, err := executor.EmitIR(code, "")
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "IR generation failed"})
 		}

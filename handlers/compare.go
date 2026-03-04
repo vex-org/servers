@@ -9,8 +9,9 @@ import (
 )
 
 type CompareRequest struct {
-	Code  string   `json:"code"`
-	Langs []string `json:"langs"` // ["go", "rust", "zig"]
+	Code     string   `json:"code"`
+	Langs    []string `json:"langs"`
+	OptLevel string   `json:"opt_level,omitempty"`
 }
 
 type LangResult struct {
@@ -55,7 +56,7 @@ func Compare(c fiber.Ctx) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r, err := executor.RunVex(req.Code)
+		r, err := executor.RunVex(req.Code, req.OptLevel)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -102,11 +103,11 @@ func Compare(c fiber.Ctx) error {
 			var r *sandbox.RunResult
 			switch lang {
 			case "go":
-				r, err = executor.RunGo(transpiled)
+				r, err = executor.RunGo(transpiled, req.OptLevel)
 			case "rust":
-				r, err = executor.RunRust(transpiled)
+				r, err = executor.RunRust(transpiled, req.OptLevel)
 			case "zig":
-				r, err = executor.RunZig(transpiled)
+				r, err = executor.RunZig(transpiled, req.OptLevel)
 			}
 
 			mu.Lock()

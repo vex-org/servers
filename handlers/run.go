@@ -15,7 +15,8 @@ func InitExecutor(e *sandbox.Executor) {
 }
 
 type CodeRequest struct {
-	Code string `json:"code"`
+	Code     string `json:"code"`
+	OptLevel string `json:"opt_level,omitempty"`
 }
 
 func validateCode(code string) error {
@@ -41,7 +42,7 @@ func Run(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := executor.RunVex(req.Code)
+	result, err := executor.RunVex(req.Code, req.OptLevel)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "execution failed"})
 	}
@@ -59,7 +60,7 @@ func EmitIR(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := executor.EmitIR(req.Code)
+	result, err := executor.EmitIR(req.Code, req.OptLevel)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "IR generation failed"})
 	}

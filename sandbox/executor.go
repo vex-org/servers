@@ -68,8 +68,19 @@ func extractProcessMetrics(cmd *exec.Cmd) (userMs, sysMs float64, memKB int64) {
 	return
 }
 
+// validOptLevel returns a sanitized optimization level or default
+func validOptLevel(level string) string {
+	switch level {
+	case "O0", "O1", "O2", "O3":
+		return level
+	default:
+		return "O2"
+	}
+}
+
 // RunVex compiles Vex to native binary then runs it (AOT for fair benchmark)
-func (e *Executor) RunVex(code string) (*RunResult, error) {
+func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
+	opt := validOptLevel(optLevel)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
 	if err != nil {
 		return nil, err
@@ -78,17 +89,22 @@ func (e *Executor) RunVex(code string) (*RunResult, error) {
 
 	result := &RunResult{}
 
-	// Compile: vex compile <file>
+	// Compile: vex compile -O{level} <file>
 	start := time.Now()
-	compileCmd := e.buildCommand(e.VexBinary, []string{"compile", srcFile}, workDir)
+	compileCmd := e.buildCommand(e.VexBinary, []string{"compile", "-" + opt, srcFile}, workDir)
 	var compStdout, compStderr bytes.Buffer
 	compileCmd.Stdout = &compStdout
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
-		result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
-		result.Stderr = compStdout.String() + compStderr.String()
-		result.ExitCode = 1
-		return result, nil
+		// AOT compile failed (likely linker not found) - fall back to JIT
+		jitResult, jitErr := e.runVexJIT(code, opt)
+		if jitErr != nil {
+			result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+			result.Stderr = compStdout.String() + compStderr.String()
+			result.ExitCode = 1
+			return result, nil
+		}
+		return jitResult, nil
 	}
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
 
@@ -105,7 +121,7 @@ func (e *Executor) RunVex(code string) (*RunResult, error) {
 	}
 	if binFile == "" {
 		// Fallback: JIT mode
-		return e.runVexJIT(code)
+		return e.runVexJIT(code, validOptLevel(optLevel))
 	}
 	result.BinaryKB = e.BinarySize(binFile)
 
@@ -128,8 +144,9 @@ func (e *Executor) RunVex(code string) (*RunResult, error) {
 }
 
 // runVexJIT falls back to JIT when AOT compile doesn't produce a binary
-func (e *Executor) runVexJIT(code string) (*RunResult, error) {
-	r, err := e.runCompiler(code, e.VexBinary, "run", ".vx")
+func (e *Executor) runVexJIT(code string, opt string) (*RunResult, error) {
+	subCmd := "run -" + opt
+	r, err := e.runCompiler(code, e.VexBinary, subCmd, ".vx")
 	if err != nil {
 		return r, err
 	}
@@ -138,7 +155,8 @@ func (e *Executor) runVexJIT(code string) (*RunResult, error) {
 }
 
 // EmitIR compiles Vex code and returns LLVM IR from generated .ll file
-func (e *Executor) EmitIR(code string) (*RunResult, error) {
+func (e *Executor) EmitIR(code string, optLevel string) (*RunResult, error) {
+	opt := validOptLevel(optLevel)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
 	if err != nil {
 		return nil, err
@@ -148,7 +166,7 @@ func (e *Executor) EmitIR(code string) (*RunResult, error) {
 	result := &RunResult{}
 
 	start := time.Now()
-	cmd := e.buildCommand(e.VexBinary, []string{"compile", "--emit-llvm", srcFile}, workDir)
+	cmd := e.buildCommand(e.VexBinary, []string{"compile", "--emit-llvm", "-" + opt, srcFile}, workDir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -180,7 +198,7 @@ func (e *Executor) EmitIR(code string) (*RunResult, error) {
 }
 
 // RunGo compiles and runs Go code (separate compile + run for fair timing)
-func (e *Executor) RunGo(code string) (*RunResult, error) {
+func (e *Executor) RunGo(code string, optLevel string) (*RunResult, error) {
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".go")
 	if err != nil {
 		return nil, err
@@ -190,9 +208,17 @@ func (e *Executor) RunGo(code string) (*RunResult, error) {
 	binFile := filepath.Join(workDir, "program")
 	result := &RunResult{}
 
+	// Build compile args based on opt level
+	opt := validOptLevel(optLevel)
+	args := []string{"build", "-o", binFile}
+	if opt == "O0" {
+		args = append(args, `-gcflags=all=-N -l`)
+	}
+	args = append(args, srcFile)
+
 	// Compile
 	start := time.Now()
-	compileCmd := e.buildCommand("go", []string{"build", "-o", binFile, srcFile}, workDir)
+	compileCmd := e.buildCommand("go", args, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	compileCmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, ".cache"))
@@ -224,7 +250,7 @@ func (e *Executor) RunGo(code string) (*RunResult, error) {
 }
 
 // RunRust compiles and runs Rust code
-func (e *Executor) RunRust(code string) (*RunResult, error) {
+func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".rs")
 	if err != nil {
 		return nil, err
@@ -234,9 +260,13 @@ func (e *Executor) RunRust(code string) (*RunResult, error) {
 	binFile := filepath.Join(workDir, "program")
 	result := &RunResult{}
 
+	// Map opt level to rustc flag
+	opt := validOptLevel(optLevel)
+	rustOpt := map[string]string{"O0": "0", "O1": "1", "O2": "2", "O3": "3"}[opt]
+
 	// Compile
 	start := time.Now()
-	compileCmd := e.buildCommand("rustc", []string{"-o", binFile, srcFile}, workDir)
+	compileCmd := e.buildCommand("rustc", []string{"-C", "opt-level=" + rustOpt, "-o", binFile, srcFile}, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
@@ -267,7 +297,7 @@ func (e *Executor) RunRust(code string) (*RunResult, error) {
 }
 
 // RunZig compiles and runs Zig code
-func (e *Executor) RunZig(code string) (*RunResult, error) {
+func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".zig")
 	if err != nil {
 		return nil, err
@@ -277,8 +307,12 @@ func (e *Executor) RunZig(code string) (*RunResult, error) {
 	binFile := filepath.Join(workDir, "program")
 	result := &RunResult{}
 
+	// Map opt level to Zig flag
+	opt := validOptLevel(optLevel)
+	zigOpt := map[string]string{"O0": "-ODebug", "O1": "-OReleaseSafe", "O2": "-OReleaseFast", "O3": "-OReleaseFast"}[opt]
+
 	start := time.Now()
-	compileCmd := e.buildCommand("zig", []string{"build-exe", "-femit-bin=" + binFile, srcFile}, workDir)
+	compileCmd := e.buildCommand("zig", []string{"build-exe", zigOpt, "-femit-bin=" + binFile, srcFile}, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
