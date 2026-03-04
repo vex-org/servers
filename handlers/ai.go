@@ -11,15 +11,20 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+
+	"github.com/vex-org/servers/rag"
 )
 
 var aiCfg struct {
-	Backend    string // "groq" or "ollama"
-	GroqKey    string
-	GroqModel  string
-	OllamaURL  string
+	Backend     string // "groq" or "ollama"
+	GroqKey     string
+	GroqModel   string
+	OllamaURL   string
 	OllamaModel string
 }
+
+// RAG index reference (set by InitRAG)
+var ragIndex *rag.Index
 
 // InitAI configures the AI backend (called from main)
 func InitAI(backend, groqKey, groqModel, ollamaURL, ollamaModel string) {
@@ -28,6 +33,16 @@ func InitAI(backend, groqKey, groqModel, ollamaURL, ollamaModel string) {
 	aiCfg.GroqModel = groqModel
 	aiCfg.OllamaURL = ollamaURL
 	aiCfg.OllamaModel = ollamaModel
+}
+
+// InitRAG sets the RAG index for AI context enrichment
+func InitRAG(index *rag.Index) {
+	ragIndex = index
+}
+
+// AIChat is the exported AI chat function for MCP server usage
+func AIChat(system, user string) (string, error) {
+	return aiChat(system, user)
 }
 
 var vexSystemPrompt = `You are a Vex programming language expert assistant.
@@ -67,7 +82,27 @@ func AskAI(c fiber.Ctx) error {
 	}
 
 	prompt := buildPrompt(req)
-	answer, err := aiChat(vexSystemPrompt, prompt)
+
+	// Enrich system prompt with RAG context
+	system := vexSystemPrompt
+	if ragIndex != nil {
+		query := req.Question + " " + req.Code
+		results := ragIndex.Search(query, 3)
+		if len(results) > 0 {
+			var ctx strings.Builder
+			ctx.WriteString("\n\n## Relevant Vex Documentation\n")
+			for _, r := range results {
+				content := r.Chunk.Content
+				if len(content) > 1200 {
+					content = content[:1200] + "\n..."
+				}
+				ctx.WriteString(fmt.Sprintf("\n### %s [%s]\n%s\n", r.Chunk.Title, r.Chunk.Category, content))
+			}
+			system += ctx.String()
+		}
+	}
+
+	answer, err := aiChat(system, prompt)
 	if err != nil {
 		return c.Status(502).JSON(fiber.Map{"error": "AI service unavailable"})
 	}
