@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,19 +45,155 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 	}
 }
 
-// RunVex compiles and runs Vex code, returns stdout/stderr/timing
+// RunVex compiles Vex to native binary then runs it (AOT for fair benchmark)
 func (e *Executor) RunVex(code string) (*RunResult, error) {
-	return e.runCompiler(code, e.VexBinary, "run", ".vx")
+	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	result := &RunResult{}
+
+	// Compile: vex compile <file>
+	start := time.Now()
+	compileCmd := e.buildCommand(e.VexBinary, []string{"compile", srcFile}, workDir)
+	var compStdout, compStderr bytes.Buffer
+	compileCmd.Stdout = &compStdout
+	compileCmd.Stderr = &compStderr
+	if err := compileCmd.Run(); err != nil {
+		result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+		result.Stderr = compStdout.String() + compStderr.String()
+		result.ExitCode = 1
+		return result, nil
+	}
+	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+
+	// Find compiled binary (vex-builds/main or ./main)
+	binFile := ""
+	for _, candidate := range []string{
+		filepath.Join(workDir, "vex-builds", "main"),
+		filepath.Join(workDir, "main"),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			binFile = candidate
+			break
+		}
+	}
+	if binFile == "" {
+		// Fallback: JIT mode
+		return e.runVexJIT(code)
+	}
+
+	// Run
+	start = time.Now()
+	runCmd := e.buildCommand(binFile, nil, workDir)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exit.ExitCode()
+		}
+	}
+	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.Stdout = stdout.String()
+	result.Stderr = result.Stderr + stderr.String()
+	return result, nil
 }
 
-// EmitIR compiles Vex code and returns LLVM IR
+// runVexJIT falls back to JIT when AOT compile doesn't produce a binary
+func (e *Executor) runVexJIT(code string) (*RunResult, error) {
+	r, err := e.runCompiler(code, e.VexBinary, "run", ".vx")
+	if err != nil {
+		return r, err
+	}
+	parseVexTiming(r)
+	return r, nil
+}
+
+// EmitIR compiles Vex code and returns LLVM IR from generated .ll file
 func (e *Executor) EmitIR(code string) (*RunResult, error) {
-	return e.runCompiler(code, e.VexBinary, "compile --emit-llvm", ".vx")
+	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	result := &RunResult{}
+
+	start := time.Now()
+	cmd := e.buildCommand(e.VexBinary, []string{"compile", "--emit-llvm", srcFile}, workDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exit.ExitCode()
+		} else {
+			result.ExitCode = 1
+		}
+	}
+	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.Stderr = stderr.String()
+
+	// Read the generated .ll file
+	for _, candidate := range []string{
+		filepath.Join(workDir, "vex-builds", "main.ll"),
+		filepath.Join(workDir, "main.ll"),
+	} {
+		if data, err := os.ReadFile(candidate); err == nil {
+			result.Stdout = string(data)
+			return result, nil
+		}
+	}
+
+	// If no .ll file found, return whatever stdout had (error messages)
+	result.Stdout = stdout.String()
+	return result, nil
 }
 
-// RunGo compiles and runs Go code
+// RunGo compiles and runs Go code (separate compile + run for fair timing)
 func (e *Executor) RunGo(code string) (*RunResult, error) {
-	return e.runCompiler(code, "go", "run", ".go")
+	workDir, srcFile, cleanup, err := e.writeSource(code, ".go")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	binFile := filepath.Join(workDir, "program")
+	result := &RunResult{}
+
+	// Compile
+	start := time.Now()
+	compileCmd := e.buildCommand("go", []string{"build", "-o", binFile, srcFile}, workDir)
+	var compStderr bytes.Buffer
+	compileCmd.Stderr = &compStderr
+	compileCmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, ".cache"))
+	if err := compileCmd.Run(); err != nil {
+		result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+		result.Stderr = compStderr.String()
+		result.ExitCode = 1
+		return result, nil
+	}
+	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+
+	// Run
+	start = time.Now()
+	runCmd := e.buildCommand(binFile, nil, workDir)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exit.ExitCode()
+		}
+	}
+	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.Stdout = stdout.String()
+	result.Stderr = result.Stderr + stderr.String()
+	return result, nil
 }
 
 // RunRust compiles and runs Rust code
@@ -246,4 +384,21 @@ func splitArgs(s string) []string {
 		args = append(args, current)
 	}
 	return args
+}
+
+var vexCompileTimeRe = regexp.MustCompile(`Compile time:\s*([\d.]+)ms`)
+var vexRunTimeRe = regexp.MustCompile(`Run time:\s*([\d.]+)ms`)
+
+// parseVexTiming extracts Vex's own timing lines from stdout and updates result
+func parseVexTiming(r *RunResult) {
+	if m := vexCompileTimeRe.FindStringSubmatch(r.Stdout); len(m) == 2 {
+		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+			r.CompileTimeMs = v
+		}
+	}
+	if m := vexRunTimeRe.FindStringSubmatch(r.Stdout); len(m) == 2 {
+		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+			r.RunTimeMs = v
+		}
+	}
 }
