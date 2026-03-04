@@ -14,11 +14,16 @@ type CompareRequest struct {
 }
 
 type LangResult struct {
-	TimeMs   float64 `json:"time_ms"`
-	BinaryKB int64   `json:"binary_kb"`
-	MemoryKB int64   `json:"memory_kb"`
-	Code     string  `json:"code"`
-	Error    string  `json:"error,omitempty"`
+	TimeMs        float64 `json:"time_ms"`
+	CompileTimeMs float64 `json:"compile_time_ms"`
+	RunTimeMs     float64 `json:"run_time_ms"`
+	UserTimeMs    float64 `json:"user_time_ms"`
+	SysTimeMs     float64 `json:"sys_time_ms"`
+	BinaryKB      int64   `json:"binary_kb"`
+	MemoryKB      int64   `json:"memory_kb"`
+	Code          string  `json:"code"`
+	Stdout        string  `json:"stdout,omitempty"`
+	Error         string  `json:"error,omitempty"`
 }
 
 // POST /api/website/compare
@@ -57,9 +62,24 @@ func Compare(c fiber.Ctx) error {
 			results["vex"] = &LangResult{Error: "execution failed"}
 			return
 		}
+		if r.ExitCode != 0 {
+			errMsg := r.Stderr
+			if errMsg == "" {
+				errMsg = "compilation failed"
+			}
+			results["vex"] = &LangResult{Error: errMsg, Code: req.Code}
+			return
+		}
 		results["vex"] = &LangResult{
-			TimeMs: r.RunTimeMs,
-			Code:   req.Code,
+			TimeMs:        r.RunTimeMs,
+			CompileTimeMs: r.CompileTimeMs,
+			RunTimeMs:     r.RunTimeMs,
+			UserTimeMs:    r.UserTimeMs,
+			SysTimeMs:     r.SysTimeMs,
+			BinaryKB:      r.BinaryKB,
+			MemoryKB:      r.MemoryKB,
+			Code:          req.Code,
+			Stdout:        r.Stdout,
 		}
 	}()
 
@@ -95,9 +115,24 @@ func Compare(c fiber.Ctx) error {
 				results[lang] = &LangResult{Error: "execution failed", Code: transpiled}
 				return
 			}
+			if r.ExitCode != 0 {
+				errMsg := r.Stderr
+				if errMsg == "" {
+					errMsg = "compilation failed"
+				}
+				results[lang] = &LangResult{Error: errMsg, Code: transpiled}
+				return
+			}
 			results[lang] = &LangResult{
-				TimeMs: r.RunTimeMs,
-				Code:   transpiled,
+				TimeMs:        r.RunTimeMs,
+				CompileTimeMs: r.CompileTimeMs,
+				RunTimeMs:     r.RunTimeMs,
+				UserTimeMs:    r.UserTimeMs,
+				SysTimeMs:     r.SysTimeMs,
+				BinaryKB:      r.BinaryKB,
+				MemoryKB:      r.MemoryKB,
+				Code:          transpiled,
+				Stdout:        r.Stdout,
 			}
 		}(lang)
 	}

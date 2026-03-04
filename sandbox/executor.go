@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +22,10 @@ type RunResult struct {
 	ExitCode      int     `json:"exit_code"`
 	CompileTimeMs float64 `json:"compile_time_ms"`
 	RunTimeMs     float64 `json:"run_time_ms"`
+	UserTimeMs    float64 `json:"user_time_ms"`
+	SysTimeMs     float64 `json:"sys_time_ms"`
+	MemoryKB      int64   `json:"memory_kb"`
+	BinaryKB      int64   `json:"binary_kb"`
 	TimedOut      bool    `json:"timed_out,omitempty"`
 }
 
@@ -43,6 +49,23 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 		MemoryLimitMB:  256,
 		TmpDir:         tmpDir,
 	}
+}
+
+func extractProcessMetrics(cmd *exec.Cmd) (userMs, sysMs float64, memKB int64) {
+	if cmd.ProcessState == nil {
+		return
+	}
+	ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage)
+	if !ok || ru == nil {
+		return
+	}
+	userMs = float64(ru.Utime.Sec)*1000.0 + float64(ru.Utime.Usec)/1000.0
+	sysMs = float64(ru.Stime.Sec)*1000.0 + float64(ru.Stime.Usec)/1000.0
+	memKB = ru.Maxrss
+	if runtime.GOOS == "darwin" {
+		memKB = memKB / 1024
+	}
+	return
 }
 
 // RunVex compiles Vex to native binary then runs it (AOT for fair benchmark)
@@ -84,6 +107,7 @@ func (e *Executor) RunVex(code string) (*RunResult, error) {
 		// Fallback: JIT mode
 		return e.runVexJIT(code)
 	}
+	result.BinaryKB = e.BinarySize(binFile)
 
 	// Run
 	start = time.Now()
@@ -97,6 +121,7 @@ func (e *Executor) RunVex(code string) (*RunResult, error) {
 		}
 	}
 	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
 	return result, nil
@@ -178,6 +203,7 @@ func (e *Executor) RunGo(code string) (*RunResult, error) {
 		return result, nil
 	}
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.BinaryKB = e.BinarySize(binFile)
 
 	// Run
 	start = time.Now()
@@ -191,6 +217,7 @@ func (e *Executor) RunGo(code string) (*RunResult, error) {
 		}
 	}
 	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
 	return result, nil
@@ -219,6 +246,7 @@ func (e *Executor) RunRust(code string) (*RunResult, error) {
 		return result, nil
 	}
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.BinaryKB = e.BinarySize(binFile)
 
 	// Run
 	start = time.Now()
@@ -232,6 +260,7 @@ func (e *Executor) RunRust(code string) (*RunResult, error) {
 		}
 	}
 	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
 	return result, nil
@@ -249,7 +278,7 @@ func (e *Executor) RunZig(code string) (*RunResult, error) {
 	result := &RunResult{}
 
 	start := time.Now()
-	compileCmd := e.buildCommand("zig", []string{"build-exe", "-o", binFile, srcFile}, workDir)
+	compileCmd := e.buildCommand("zig", []string{"build-exe", "-femit-bin=" + binFile, srcFile}, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
@@ -259,6 +288,7 @@ func (e *Executor) RunZig(code string) (*RunResult, error) {
 		return result, nil
 	}
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.BinaryKB = e.BinarySize(binFile)
 
 	start = time.Now()
 	runCmd := e.buildCommand(binFile, nil, workDir)
@@ -271,6 +301,7 @@ func (e *Executor) RunZig(code string) (*RunResult, error) {
 		}
 	}
 	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
 	return result, nil
