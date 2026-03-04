@@ -1,0 +1,29 @@
+[Unit]
+Description=Vex API Server
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=vex
+Group=vex
+WorkingDirectory=/opt/vex-api
+ExecStart=/opt/vex-api/vex-api
+Restart=always
+RestartSec=3
+
+# Environment
+EnvironmentFile=/opt/vex-api/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp/vex-sandbox
+
+# Resource limits
+LimitNOFILE=65535
+MemoryMax=512M
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,72 @@
+name: Deploy API to Hetzner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/server/**'
+  workflow_dispatch:
+
+env:
+  SERVER_HOST: ${{ secrets.HETZNER_HOST }}
+  DEPLOY_PATH: /opt/vex-api
+
+jobs:
+  deploy:
+    name: Build & Deploy (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build for amd64
+        working-directory: web/server
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags="-s -w" -o vex-api .
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
+          SCP="scp -i ~/.ssh/deploy_key"
+
+          # Upload binary
+          $SCP web/server/vex-api root@${{ env.SERVER_HOST }}:/tmp/vex-api-new
+
+          # Atomic swap + restart + health check
+          $SSH << 'DEPLOY'
+            set -e
+            DEPLOY_PATH=/opt/vex-api
+
+            # Backup
+            [ -f $DEPLOY_PATH/vex-api ] && cp $DEPLOY_PATH/vex-api $DEPLOY_PATH/vex-api.bak
+
+            # Swap
+            chmod +x /tmp/vex-api-new
+            mv /tmp/vex-api-new $DEPLOY_PATH/vex-api
+            systemctl restart vex-api
+
+            # Health check
+            for i in $(seq 1 10); do
+              curl -sf http://127.0.0.1:8080/api/website/health > /dev/null 2>&1 && echo "✅ Deploy OK" && exit 0
+              sleep 1
+            done
+
+            # Rollback
+            echo "❌ Health check failed — rolling back"
+            [ -f $DEPLOY_PATH/vex-api.bak ] && mv $DEPLOY_PATH/vex-api.bak $DEPLOY_PATH/vex-api && systemctl restart vex-api
+            exit 1
+          DEPLOY
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
