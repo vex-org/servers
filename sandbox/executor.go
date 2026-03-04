@@ -96,8 +96,8 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	compileCmd.Stdout = &compStdout
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
-		// AOT compile failed (likely linker not found) - fall back to JIT
-		jitResult, jitErr := e.runVexJIT(code, opt)
+		// AOT compile failed - fall back to --no-jit AOT mode
+		jitResult, jitErr := e.runVexNoJIT(code, opt)
 		if jitErr != nil {
 			result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
 			result.Stderr = compStdout.String() + compStderr.String()
@@ -120,8 +120,8 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 		}
 	}
 	if binFile == "" {
-		// Fallback: JIT mode
-		return e.runVexJIT(code, validOptLevel(optLevel))
+		// Fallback: --no-jit AOT mode
+		return e.runVexNoJIT(code, validOptLevel(optLevel))
 	}
 	result.BinaryKB = e.BinarySize(binFile)
 
@@ -143,9 +143,9 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	return result, nil
 }
 
-// runVexJIT falls back to JIT when AOT compile doesn't produce a binary
-func (e *Executor) runVexJIT(code string, opt string) (*RunResult, error) {
-	subCmd := "run -" + opt
+// runVexNoJIT falls back to vex run --no-jit for AOT execution in a single step
+func (e *Executor) runVexNoJIT(code string, opt string) (*RunResult, error) {
+	subCmd := "run --no-jit -" + opt
 	r, err := e.runCompiler(code, e.VexBinary, subCmd, ".vx")
 	if err != nil {
 		return r, err
