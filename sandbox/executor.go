@@ -382,6 +382,7 @@ func (e *Executor) runCompiler(code, compiler, subCmd, ext string) (*RunResult, 
 	elapsed := time.Since(start)
 	result.CompileTimeMs = float64(elapsed.Microseconds()) / 1000
 	result.RunTimeMs = result.CompileTimeMs // JIT mode: compile + run together
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(cmd)
 	result.Stdout = stdout.String()
 	result.Stderr = stderr.String()
 	return result, nil
