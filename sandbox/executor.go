@@ -301,7 +301,7 @@ func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 
 	// Compile
 	start := time.Now()
-	compileCmd := e.buildCommand("rustc", []string{"-C", "opt-level=" + rustOpt, "-o", binFile, srcFile}, workDir)
+	compileCmd := e.buildCommand("rustc", []string{"-C", "opt-level=" + rustOpt, "-C", "incremental=" + filepath.Join(workDir, ".incr"), "-o", binFile, srcFile}, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
@@ -347,7 +347,8 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 	zigOpt := map[string]string{"O0": "-ODebug", "O1": "-OReleaseSafe", "O2": "-OReleaseFast", "O3": "-OReleaseFast"}[opt]
 
 	start := time.Now()
-	compileCmd := e.buildCommand("zig", []string{"build-exe", zigOpt, "-femit-bin=" + binFile, srcFile}, workDir)
+	zigCacheDir := filepath.Join(workDir, ".zig-cache")
+	compileCmd := e.buildCommand("zig", []string{"build-exe", zigOpt, "--cache-dir", zigCacheDir, "--global-cache-dir", zigCacheDir, "-femit-bin=" + binFile, srcFile}, workDir)
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {

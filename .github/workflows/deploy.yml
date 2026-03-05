@@ -31,6 +31,63 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Sync Vex compiler from latest release
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
+
+          $SSH << 'SYNC_VEX'
+            set -e
+            VEX_DIR=/opt/vex
+
+            # Get latest release tag from GitHub API
+            LATEST=$(curl -sf https://api.github.com/repos/nicholaschenai/vex_lang/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+            if [ -z "$LATEST" ]; then
+              echo "⚠️ Could not fetch latest release tag, skipping vex sync"
+              exit 0
+            fi
+
+            # Check if already up to date
+            CURRENT=""
+            [ -f "$VEX_DIR/bin/vex" ] && CURRENT=$($VEX_DIR/bin/vex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+            LATEST_VER=$(echo "$LATEST" | sed 's/^v//')
+            if [ "$CURRENT" = "$LATEST_VER" ]; then
+              echo "✅ Vex already at $LATEST_VER"
+              exit 0
+            fi
+
+            # Detect arch
+            ARCH=$(uname -m)
+            case "$ARCH" in
+              x86_64)  SUFFIX="linux-x86_64" ;;
+              aarch64) SUFFIX="linux-aarch64" ;;
+              *)       echo "⚠️ Unsupported arch: $ARCH"; exit 0 ;;
+            esac
+
+            TARBALL="vex-${LATEST}-${SUFFIX}.tar.gz"
+            URL="https://github.com/nicholaschenai/vex_lang/releases/download/${LATEST}/${TARBALL}"
+
+            echo "📦 Downloading $TARBALL..."
+            curl -sfL "$URL" -o /tmp/vex-release.tar.gz || { echo "⚠️ Download failed"; exit 0; }
+
+            # Extract and install
+            rm -rf /tmp/vex-release
+            mkdir -p /tmp/vex-release
+            tar -xzf /tmp/vex-release.tar.gz -C /tmp/vex-release --strip-components=1
+
+            mkdir -p "$VEX_DIR/bin" "$VEX_DIR/lib/runtime" "$VEX_DIR/lib/std"
+            cp /tmp/vex-release/bin/* "$VEX_DIR/bin/" 2>/dev/null || true
+            chmod +x "$VEX_DIR/bin/"*
+            cp -r /tmp/vex-release/lib/runtime/* "$VEX_DIR/lib/runtime/" 2>/dev/null || true
+            cp -r /tmp/vex-release/lib/std/* "$VEX_DIR/lib/std/" 2>/dev/null || true
+
+            # Verify
+            echo "✅ Vex updated to $($VEX_DIR/bin/vex --version 2>/dev/null || echo $LATEST_VER)"
+            ls -la "$VEX_DIR/lib/runtime/"
+
+            # Cleanup
+            rm -rf /tmp/vex-release /tmp/vex-release.tar.gz
+          SYNC_VEX
+
       - name: Deploy
         run: |
           SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
