@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ type RunResult struct {
 	MemoryKB      int64   `json:"memory_kb"`
 	BinaryKB      int64   `json:"binary_kb"`
 	TimedOut      bool    `json:"timed_out,omitempty"`
+	VexVersion    string  `json:"vex_version,omitempty"`
 }
 
 type Executor struct {
@@ -36,11 +38,22 @@ type Executor struct {
 	Timeout        time.Duration
 	MemoryLimitMB  int
 	TmpDir         string
+	VexVersion     string
 }
 
 func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 	tmpDir := filepath.Join(os.TempDir(), "vex-sandbox")
 	os.MkdirAll(tmpDir, 0755)
+
+	// Cache vex version at startup
+	vexVersion := "unknown"
+	if out, err := exec.Command(vexBin, "--version").CombinedOutput(); err == nil {
+		v := strings.TrimSpace(string(out))
+		if v != "" {
+			vexVersion = v
+		}
+	}
+
 	return &Executor{
 		VexBinary:      vexBin,
 		SandboxBinary:  sandboxBin,
@@ -48,6 +61,7 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 		Timeout:        10 * time.Second,
 		MemoryLimitMB:  256,
 		TmpDir:         tmpDir,
+		VexVersion:     vexVersion,
 	}
 }
 
@@ -140,6 +154,7 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	result.VexVersion = e.VexVersion
 	return result, nil
 }
 
@@ -151,6 +166,7 @@ func (e *Executor) runVexNoJIT(code string, opt string) (*RunResult, error) {
 		return r, err
 	}
 	parseVexTiming(r)
+	r.VexVersion = e.VexVersion
 	return r, nil
 }
 
