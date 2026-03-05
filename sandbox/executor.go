@@ -110,12 +110,19 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	compileCmd.Stdout = &compStdout
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
-		// AOT compile failed - fall back to --no-jit AOT mode
+		compileErr := compStdout.String() + compStderr.String()
+		// AOT compile failed — check if it's a linker error
+		if strings.Contains(compileErr, "Linking failed") || strings.Contains(compileErr, "cannot find -lvex_runtime_core") {
+			// Runtime .a missing — use JIT mode (no linking needed)
+			return e.runVexJIT(code, opt)
+		}
+		// Non-linker failure — fall back to --no-jit AOT mode
 		jitResult, jitErr := e.runVexNoJIT(code, opt)
 		if jitErr != nil {
 			result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
-			result.Stderr = compStdout.String() + compStderr.String()
+			result.Stderr = compileErr
 			result.ExitCode = 1
+			result.VexVersion = e.VexVersion
 			return result, nil
 		}
 		return jitResult, nil
@@ -134,8 +141,8 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 		}
 	}
 	if binFile == "" {
-		// Fallback: --no-jit AOT mode
-		return e.runVexNoJIT(code, validOptLevel(optLevel))
+		// Fallback: JIT mode
+		return e.runVexJIT(code, opt)
 	}
 	result.BinaryKB = e.BinarySize(binFile)
 
@@ -156,6 +163,18 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	result.Stderr = result.Stderr + stderr.String()
 	result.VexVersion = e.VexVersion
 	return result, nil
+}
+
+// runVexJIT uses JIT mode (vex run) — no external linking needed
+func (e *Executor) runVexJIT(code string, opt string) (*RunResult, error) {
+	subCmd := "run -" + opt
+	r, err := e.runCompiler(code, e.VexBinary, subCmd, ".vx")
+	if err != nil {
+		return r, err
+	}
+	parseVexTiming(r)
+	r.VexVersion = e.VexVersion
+	return r, nil
 }
 
 // runVexNoJIT falls back to vex run --no-jit for AOT execution in a single step
