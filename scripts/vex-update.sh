@@ -32,7 +32,8 @@ LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases/l
 
 if [ -z "$LATEST" ]; then
     log "Could not fetch latest release tag, skipping"
-    exit 0
+    [ -f "$VEX_BIN" ] && exit 0
+    exit 1
 fi
 
 LATEST_VER=$(echo "$LATEST" | sed 's/^v//')
@@ -60,6 +61,7 @@ trap cleanup EXIT
 
 curl -sfL --max-time 120 "$URL" -o "$TMPDIR/release.tar.gz" || {
     log "Download failed: $URL"
+    [ -f "$VEX_BIN" ] && { log "Keeping current version"; exit 0; }
     exit 1
 }
 

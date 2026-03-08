@@ -7,7 +7,7 @@ Type=simple
 User=vex
 Group=vex
 WorkingDirectory=/opt/vex-api
-ExecStartPre=/opt/vex-api/scripts/vex-update.sh
+ExecStartPre=-+/opt/vex-api/scripts/vex-update.sh
 ExecStart=/opt/vex-api/vex-api
 Restart=always
 RestartSec=3
@@ -19,7 +19,7 @@ EnvironmentFile=/opt/vex-api/.env
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/tmp/vex-sandbox
+ReadWritePaths=/tmp/vex-sandbox /opt/vex /tmp
 
 # Resource limits
 LimitNOFILE=65535
