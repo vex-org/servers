@@ -31,6 +31,140 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Ensure server environment
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
+
+          $SSH << 'ENSURE'
+            set -e
+
+            # Detect rescue mode — abort if active
+            if [ -f /etc/motd ] && grep -qi "rescue" /etc/motd 2>/dev/null; then
+              echo "⚠️ Server is in RESCUE MODE — cannot deploy. Reboot into normal OS first."
+              exit 1
+            fi
+
+            # Ensure directories exist (first deploy or post-reinstall)
+            mkdir -p /opt/vex-api /opt/vex/bin /opt/vex/lib/runtime /opt/vex/lib/std /tmp/vex-sandbox
+
+            # Create vex service user if missing
+            id -u vex >/dev/null 2>&1 || useradd -r -m -s /bin/bash vex
+            chown -R vex:vex /opt/vex-api /tmp/vex-sandbox
+
+            # Ensure essential tools are installed
+            NEED_INSTALL=""
+            command -v go >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL go"
+            command -v rustc >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL rust"
+            command -v zig >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL zig"
+            command -v nginx >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL nginx"
+
+            if [ -n "$NEED_INSTALL" ]; then
+              echo "📦 Installing missing tools:$NEED_INSTALL"
+              apt-get update -qq
+
+              if echo "$NEED_INSTALL" | grep -q "nginx"; then
+                apt-get install -y -qq nginx certbot python3-certbot-nginx
+              fi
+
+              if echo "$NEED_INSTALL" | grep -q "go"; then
+                GO_VERSION="1.23.4"
+                wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz
+                rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
+                [ -f /etc/profile.d/go.sh ] || echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+                export PATH=$PATH:/usr/local/go/bin
+                echo "  ✅ Go $(go version | awk '{print $3}')"
+              fi
+
+              if echo "$NEED_INSTALL" | grep -q "rust"; then
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+                source "$HOME/.cargo/env"
+                echo "  ✅ $(rustc --version)"
+              fi
+
+              if echo "$NEED_INSTALL" | grep -q "zig"; then
+                ZIG_VERSION="0.13.0"
+                wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -O /tmp/zig.tar.xz
+                mkdir -p /opt/zig && tar -C /opt/zig --strip-components=1 -xf /tmp/zig.tar.xz && rm /tmp/zig.tar.xz
+                ln -sf /opt/zig/zig /usr/local/bin/zig
+                echo "  ✅ Zig $(zig version)"
+              fi
+            fi
+
+            # Ensure systemd service is installed
+            if [ ! -f /etc/systemd/system/vex-api.service ]; then
+              echo "📋 Installing systemd service..."
+              cat > /etc/systemd/system/vex-api.service << 'SVC'
+            [Unit]
+            Description=Vex API Server
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=vex
+            Group=vex
+            WorkingDirectory=/opt/vex-api
+            ExecStart=/opt/vex-api/vex-api
+            Restart=always
+            RestartSec=3
+            EnvironmentFile=/opt/vex-api/.env
+            NoNewPrivileges=true
+            ProtectSystem=strict
+            ProtectHome=true
+            ReadWritePaths=/tmp/vex-sandbox
+            LimitNOFILE=65535
+            MemoryMax=512M
+            CPUQuota=200%
+
+            [Install]
+            WantedBy=multi-user.target
+            SVC
+              systemctl daemon-reload
+              systemctl enable vex-api
+            fi
+
+            # Ensure nginx config is installed
+            if [ ! -f /etc/nginx/sites-available/vex-api.conf ]; then
+              echo "📋 Installing nginx config..."
+              cat > /etc/nginx/sites-available/vex-api.conf << 'NGX'
+            server {
+                listen 80;
+                server_name api.vex-lang.org;
+                return 301 https://$host$request_uri;
+            }
+            server {
+                listen 443 ssl http2;
+                server_name api.vex-lang.org;
+                ssl_certificate     /etc/letsencrypt/live/api.vex-lang.org/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/api.vex-lang.org/privkey.pem;
+                ssl_protocols TLSv1.2 TLSv1.3;
+                ssl_prefer_server_ciphers on;
+                add_header X-Frame-Options "DENY" always;
+                add_header X-Content-Type-Options "nosniff" always;
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+                limit_req_zone $binary_remote_addr zone=api:10m rate=60r/m;
+                location /api/website/ {
+                    limit_req zone=api burst=20 nodelay;
+                    proxy_pass http://127.0.0.1:8080;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_read_timeout 30s;
+                    proxy_send_timeout 10s;
+                    proxy_connect_timeout 5s;
+                }
+                location / { return 404; }
+            }
+            NGX
+              ln -sf /etc/nginx/sites-available/vex-api.conf /etc/nginx/sites-enabled/
+              nginx -t && systemctl reload nginx
+              # TLS — may fail if DNS not yet pointed
+              certbot --nginx -d api.vex-lang.org --non-interactive --agree-tos -m admin@vex-lang.org 2>/dev/null || echo "⚠️ Certbot skipped (DNS may not be ready)"
+            fi
+
+            echo "✅ Server environment ready"
+          ENSURE
+
       - name: Sync Vex compiler from latest release
         run: |
           SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
@@ -40,7 +174,7 @@ jobs:
             VEX_DIR=/opt/vex
 
             # Get latest release tag from GitHub API
-            LATEST=$(curl -sf https://api.github.com/repos/nicholaschenai/vex_lang/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+            LATEST=$(curl -sf https://api.github.com/repos/meftunca/vex/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
             if [ -z "$LATEST" ]; then
               echo "⚠️ Could not fetch latest release tag, skipping vex sync"
               exit 0
@@ -64,7 +198,7 @@ jobs:
             esac
 
             TARBALL="vex-${LATEST}-${SUFFIX}.tar.gz"
-            URL="https://github.com/nicholaschenai/vex_lang/releases/download/${LATEST}/${TARBALL}"
+            URL="https://github.com/meftunca/vex/releases/download/${LATEST}/${TARBALL}"
 
             echo "📦 Downloading $TARBALL..."
             curl -sfL "$URL" -o /tmp/vex-release.tar.gz || { echo "⚠️ Download failed"; exit 0; }
@@ -101,12 +235,36 @@ jobs:
             set -e
             DEPLOY_PATH=/opt/vex-api
 
+            # Ensure target directory exists
+            mkdir -p $DEPLOY_PATH
+
             # Backup
             [ -f $DEPLOY_PATH/vex-api ] && cp $DEPLOY_PATH/vex-api $DEPLOY_PATH/vex-api.bak
 
             # Swap
             chmod +x /tmp/vex-api-new
             mv /tmp/vex-api-new $DEPLOY_PATH/vex-api
+
+            # Ensure .env exists (create minimal if missing)
+            if [ ! -f $DEPLOY_PATH/.env ]; then
+              echo "⚠️ No .env found — creating minimal config"
+              cat > $DEPLOY_PATH/.env << 'ENV'
+            PORT=8080
+            ALLOWED_ORIGIN=https://vex-lang.org
+            VEX_BINARY=/opt/vex/bin/vex
+            SANDBOX_ENABLED=false
+            AI_BACKEND=groq
+            GROQ_API_KEY=
+            GROQ_MODEL=openai/gpt-oss-120b
+            OLLAMA_URL=http://127.0.0.1:11434
+            OLLAMA_MODEL=qwen3.5:2b
+            ENV
+              chown vex:vex $DEPLOY_PATH/.env
+              chmod 600 $DEPLOY_PATH/.env
+              echo "⚠️ Edit /opt/vex-api/.env to add GROQ_API_KEY and other secrets"
+            fi
+
+            chown vex:vex $DEPLOY_PATH/vex-api
             systemctl restart vex-api
 
             # Health check
