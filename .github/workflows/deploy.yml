@@ -113,16 +113,32 @@ jobs:
             # Swap
             chmod +x /tmp/vex-api-new
             mv /tmp/vex-api-new $DEPLOY_PATH/vex-api
-            systemctl restart vex-api
 
-            # Health check
-            for i in $(seq 1 10); do
-              curl -sf http://127.0.0.1:8080/api/website/health > /dev/null 2>&1 && echo "✅ Deploy OK" && exit 0
-              sleep 1
+            # Restart (ExecStartPre may download vex — allow time)
+            systemctl restart vex-api || true
+            sleep 2
+
+            # Health check (30 attempts × 2s = 60s window)
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:8080/api/website/health > /dev/null 2>&1; then
+                echo "✅ Deploy OK"
+                exit 0
+              fi
+              # On first few failures, show service status for debugging
+              if [ "$i" = "5" ]; then
+                echo "⏳ Still waiting... service status:"
+                systemctl status vex-api --no-pager -l 2>&1 | tail -20 || true
+                journalctl -u vex-api --no-pager -n 30 2>&1 || true
+              fi
+              sleep 2
             done
 
             # Rollback
             echo "❌ Health check failed — rolling back"
+            echo "--- Service status ---"
+            systemctl status vex-api --no-pager -l 2>&1 | tail -20 || true
+            echo "--- Journal ---"
+            journalctl -u vex-api --no-pager -n 50 2>&1 || true
             [ -f $DEPLOY_PATH/vex-api.bak ] && mv $DEPLOY_PATH/vex-api.bak $DEPLOY_PATH/vex-api && systemctl restart vex-api
             exit 1
           DEPLOY

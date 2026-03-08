@@ -10,21 +10,13 @@ WorkingDirectory=/opt/vex-api
 ExecStartPre=-+/opt/vex-api/scripts/vex-update.sh
 ExecStart=/opt/vex-api/vex-api
 Restart=always
-RestartSec=3
+RestartSec=5
 
-# Environment
-EnvironmentFile=/opt/vex-api/.env
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/tmp/vex-sandbox /opt/vex /tmp
+# Environment (ignore if missing)
+EnvironmentFile=-/opt/vex-api/.env
 
 # Resource limits
 LimitNOFILE=65535
-MemoryMax=512M
-CPUQuota=200%
 
 [Install]
 WantedBy=multi-user.target
