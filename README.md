@@ -130,7 +130,6 @@ Model Context Protocol — VS Code / Cursor / AI agent entegrasyonu.
 
 ## Güvenlik
 
-
 ### Sandbox Kuralları
 - **Namespace isolation**: PID, mount, network, user namespace
 - **Zaman limiti**: 5 saniye (compile + run toplam)
