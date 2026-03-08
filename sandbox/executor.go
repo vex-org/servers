@@ -488,19 +488,54 @@ func splitArgs(s string) []string {
 	return args
 }
 
-var vexCompileTimeRe = regexp.MustCompile(`Compile time:\s*([\d.]+)ms`)
-var vexRunTimeRe = regexp.MustCompile(`Run time:\s*([\d.]+)ms`)
+// Vex timing output format: "   ⏱️  Compile time: 1.10s" or "112.42ms" or "66.83µs"
+var vexCompileTimeRe = regexp.MustCompile(`Compile time:\s*([\d.]+)(s|ms|µs|us|ns)`)
+var vexRunTimeRe = regexp.MustCompile(`Run time:\s*([\d.]+)(s|ms|µs|us|ns)`)
+var vexJITSetupRe = regexp.MustCompile(`JIT setup:\s*([\d.]+)(s|ms|µs|us|ns)`)
 
-// parseVexTiming extracts Vex's own timing lines from stdout and updates result
+// vexTimingLineRe matches all Vex diagnostic lines that should be stripped from user output
+var vexTimingLineRe = regexp.MustCompile(`(?m)^[^\S\n]*(⏱️|🚀|⚙️|driver::).*\n?`)
+
+// durationToMs converts a value+unit pair to milliseconds
+func durationToMs(value, unit string) float64 {
+	v, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	switch unit {
+	case "s":
+		return v * 1000
+	case "ms":
+		return v
+	case "µs", "us":
+		return v / 1000
+	case "ns":
+		return v / 1_000_000
+	}
+	return v
+}
+
+// parseVexTiming extracts Vex's own timing from stdout, updates result,
+// and strips diagnostic lines so only program output remains.
 func parseVexTiming(r *RunResult) {
-	if m := vexCompileTimeRe.FindStringSubmatch(r.Stdout); len(m) == 2 {
-		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-			r.CompileTimeMs = v
-		}
+	combined := r.Stdout + "\n" + r.Stderr
+
+	if m := vexCompileTimeRe.FindStringSubmatch(combined); len(m) == 3 {
+		r.CompileTimeMs = durationToMs(m[1], m[2])
 	}
-	if m := vexRunTimeRe.FindStringSubmatch(r.Stdout); len(m) == 2 {
-		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-			r.RunTimeMs = v
-		}
+	if m := vexRunTimeRe.FindStringSubmatch(combined); len(m) == 3 {
+		r.RunTimeMs = durationToMs(m[1], m[2])
 	}
+
+	// Strip Vex diagnostic lines from user-visible stdout
+	cleaned := vexTimingLineRe.ReplaceAllString(r.Stdout, "")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned != "" {
+		cleaned += "\n"
+	}
+	r.Stdout = cleaned
+
+	// Also strip from stderr
+	r.Stderr = vexTimingLineRe.ReplaceAllString(r.Stderr, "")
+	r.Stderr = strings.TrimSpace(r.Stderr)
 }
