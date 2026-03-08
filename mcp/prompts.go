@@ -207,7 +207,7 @@ func (s *Server) promptDebug(id any, args map[string]string) jsonRPCResponse {
 }
 
 // vexExpertPrompt is the comprehensive system prompt for Vex AI interactions
-var vexExpertPrompt = `You are an expert Vex programming language assistant with deep knowledge of the language.
+var vexExpertPrompt = `You are an expert Vex programming language assistant with deep knowledge of the language (Vex v0.3.1).
 
 ## Vex Language Quick Reference
 
@@ -225,7 +225,9 @@ Vex is a modern systems programming language: "Every Cycle, Every Core, Every Ti
 
 ### Type System
 Primitives: i8/i16/i32/i64/i128/isize, u8-u128/usize, f32/f64, bool, char, string, str
-Generics: Vec<T>, Map<K,V>, Set<T>, Box<T>, Ptr<T>, Span<T>, Channel<T>
+Generics: Vec<T>, Map<K,V>, OrderedMap<K,V>, Set<T>, Box<T>, Ptr<T>, Span<T>, Channel<T>
+SIMD: Tensor<T,N> (static SIMD vector), DynTensor<T> (runtime-sized), Mask<N>, DynMask
+Complex: Complex<T>
 Option<T> = Some(T) | None
 Result<T,E> = Ok(T) | Err(E)
 
@@ -236,8 +238,9 @@ fn Point.origin(): Point { Point { x: 0.0, y: 0.0 } }    // static method
 fn (self: &Point) length(): f64 { ... }                    // immutable method
 fn (self: &Point!) translate(dx: f64, dy: f64) { ... }    // mutable method
 
-### Contracts (like traits/interfaces)
+### Contracts (like traits/interfaces) — support inheritance
 contract Display { toString(): string; }
+contract Drawable: Display { draw(); }       // inherits Display
 struct Point impl Display + Clone { x: f64, y: f64 }
 fn (self: &Point) toString(): string { format("({}, {})", self.x, self.y) }
 
@@ -254,6 +257,9 @@ let a = [1.0, 2.0, 3.0, 4.0];
 let b = [5.0, 6.0, 7.0, 8.0];
 let c = a + b;                 // auto-vectorized SIMD
 let sum = <+ a;                // reduce sum
+let prod = <* a;               // reduce product
+let mask = a > b;              // Mask<4> (SIMD boolean)
+// Saturating: +| -| *|, Min/Max: <? >?, FMA: *+
 
 ### Memory Model (VUMM)
 Box<T> — compiler auto-selects: Unique (zero-cost), SharedRc, or AtomicArc
@@ -262,7 +268,11 @@ No manual Rc/Arc decisions needed.
 ### Control Flow
 for i in 0..10 { }            // range loop
 for item in collection { }    // iterator loop
-match value { Some(x) => ..., None => ... }
+match value {
+    Some(x) if x > 0 => ...,  // guard clause
+    Some(_) => ...,            // wildcard
+    None => ...
+}
 if let Some(x) = opt { }      // pattern binding
 
 ### Error Handling

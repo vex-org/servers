@@ -172,32 +172,17 @@ sudo nsjail \
   -- /opt/vex/bin/vex run /tmp/test.vx
 ```
 
-## 6. AI Model Kurulumu (llama.cpp + Qwen3)
+## 6. AI Model Kurulumu (Ollama + Qwen3.5)
 
 ```bash
-# llama.cpp derle (ARM NEON optimizasyonları ile)
-git clone https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp
-cd /opt/llama.cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(nproc)
+# Ollama kur
+curl -fsSL https://ollama.com/install.sh | sh
 
-# Qwen3 0.6B model indir (GGUF, ~400MB)
-mkdir -p /opt/models
-wget -O /opt/models/qwen3-0.6b-q4_k_m.gguf \
-  "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf"
+# Qwen3.5 2B model indir
+ollama pull qwen3.5:2b
 
 # Test: model çalışıyor mu?
-/opt/llama.cpp/build/bin/llama-server \
-  --model /opt/models/qwen3-0.6b-q4_k_m.gguf \
-  --host 127.0.0.1 \
-  --port 8081 \
-  --ctx-size 2048 \
-  --threads 2 \
-  --n-predict 256
-
-# Başka terminal'de test:
-curl http://127.0.0.1:8081/completion \
-  -d '{"prompt": "Explain this Vex code: fn main(): i32 { return 0; }", "n_predict": 128}'
+ollama run qwen3.5:2b "Explain this Vex code: fn main(): i32 { return 0; }"
 ```
 
 ## 7. Nginx + TLS (Let's Encrypt)
@@ -290,19 +275,14 @@ sudo systemctl enable vex-api
 ```bash
 sudo tee /etc/systemd/system/llama-server.service << 'EOF'
 [Unit]
-Description=LLama.cpp AI Server (Qwen3 0.6B)
+Description=Ollama AI Server (Qwen3.5 2B)
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-ExecStart=/opt/llama.cpp/build/bin/llama-server \
-  --model /opt/models/qwen3-0.6b-q4_k_m.gguf \
-  --host 127.0.0.1 \
-  --port 8081 \
-  --ctx-size 2048 \
-  --threads 2 \
-  --n-predict 512
+ExecStart=/usr/local/bin/ollama serve
+Environment=OLLAMA_HOST=127.0.0.1:11434
 Restart=always
 RestartSec=5
 
@@ -311,8 +291,11 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable llama-server
-sudo systemctl start llama-server
+sudo systemctl enable ollama
+sudo systemctl start ollama
+
+# Model'i önceden indir
+ollama pull qwen3.5:2b
 ```
 
 ## 9. Monitoring

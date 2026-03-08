@@ -38,12 +38,16 @@ systemctl start ollama
 
 # Pull Qwen3.5 model
 sleep 5  # Wait for Ollama to start
-ollama pull qwen3.5:0.8b
+ollama pull qwen3.5:2b
 
-# Setup systemd service
-cp /opt/vex-api/vex-api.service /etc/systemd/system/
+# Setup systemd services
+cp /opt/vex-api/scripts/vex-api.service /etc/systemd/system/
+cp /opt/vex-api/scripts/vex-update.service /etc/systemd/system/
+cp /opt/vex-api/scripts/vex-update.timer /etc/systemd/system/
+chmod +x /opt/vex-api/scripts/vex-update.sh
 systemctl daemon-reload
 systemctl enable vex-api
+systemctl enable --now vex-update.timer
 
 # Setup Nginx
 cp /opt/vex-api/vex-api.conf /etc/nginx/sites-available/

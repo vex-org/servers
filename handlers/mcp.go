@@ -11,7 +11,7 @@ import (
 func MCPInfo(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"name":        "vex-mcp-server",
-		"version":     "0.1.0",
+		"version":     "0.3.1",
 		"description": "Vex Language MCP Server — compile, run, and analyze Vex code",
 		"capabilities": fiber.Map{
 			"tools": []fiber.Map{

@@ -44,7 +44,7 @@ Oracle Cloud ARM (Ampere A1, 4 OCPU / 24GB RAM, free tier) üzerinde çalışan 
                     │  └─────────────────────────────────────┘ │
                     │                                         │
                     │  ┌─ Ollama (AI) ───────────────────────┐ │
-                    │  │  Qwen3.5 0.8B model                  │ │
+                    │  │  Qwen3.5 2B model                    │ │
                     │  │  :11434 (Ollama native API)          │ │
                     │  └─────────────────────────────────────┘ │
                     │                                         │
@@ -97,14 +97,14 @@ Benchmark Arena — Vex kodunu + AI-transpile edilen Go/Rust/Zig kodlarını der
 ```
 
 ### `POST /api/website/ai/ask`
-AI asistan — Ollama + Qwen3.5 0.8B ile Vex kodu hakkında soru cevap.
+AI asistan — Ollama + Qwen3.5 2B ile Vex kodu hakkında soru cevap.
 ```json
 // Request
 { "question": "Bu kodu açıkla", "code": "fn main(): i32 { ... }", "mode": "explain" }
 
 // Modes: "explain" | "translate" | "fix"
 // Response
-{ "answer": "Bu fonksiyon...", "model": "qwen3.5:0.8b" }
+{ "answer": "Bu fonksiyon...", "model": "qwen3.5:2b" }
 ```
 
 ### `GET /api/website/mcp-server/` + `POST /api/website/mcp-server/messages`
@@ -117,7 +117,7 @@ Model Context Protocol — VS Code / Cursor / AI agent entegrasyonu.
 
 ### `GET /api/website/health`
 ```json
-{ "status": "ok", "uptime": 86400, "arch": "arm64", "os": "linux", "compilers": { "vex": "0.2.0", "go": "go1.23", "rustc": "1.82", "zig": "0.13" } }
+{ "status": "ok", "uptime": 86400, "arch": "arm64", "os": "linux", "compilers": { "vex": "0.3.1", "go": "go1.23", "rustc": "1.82", "zig": "0.13" } }
 ```
 
 ## Rate Limiting
@@ -151,7 +151,7 @@ Model Context Protocol — VS Code / Cursor / AI agent entegrasyonu.
 | Bileşen | Teknoloji |
 |---------|----------|
 | **API Server** | Go Fiber v3 |
-| **AI Model** | Ollama + Qwen3.5 0.8B |
+| **AI Model** | Ollama + Qwen3.5 2B |
 | **Sandbox** | nsjail (namespace isolation) |
 | **CI/CD** | GitHub Actions → SSH deploy |
 | **TLS** | Nginx + Let's Encrypt |

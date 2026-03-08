@@ -29,6 +29,7 @@ func (s *Server) handleResourcesList(req jsonRPCRequest) jsonRPCResponse {
 		{URI: "vex://prelude/set", Name: "Set<T>", Description: "Hash set type", MimeType: "text/x-vex"},
 		{URI: "vex://prelude/string", Name: "string API", Description: "String type (VexString)", MimeType: "text/x-vex"},
 		{URI: "vex://prelude/str", Name: "str API", Description: "Borrowed string view (VexStr)", MimeType: "text/x-vex"},
+		{URI: "vex://prelude/char", Name: "char API", Description: "Unicode character type", MimeType: "text/x-vex"},
 		{URI: "vex://prelude/ptr", Name: "Ptr<T> API", Description: "Typed pointer wrapper", MimeType: "text/x-vex"},
 		{URI: "vex://prelude/span", Name: "Span<T> API", Description: "Bounds-checked array view", MimeType: "text/x-vex"},
 		{URI: "vex://prelude/rawbuf", Name: "RawBuf API", Description: "Byte-level memory accessor (internal)", MimeType: "text/x-vex"},
@@ -139,6 +140,7 @@ func (s *Server) readPreludeFile(name string) (string, string, error) {
 	special := map[string]string{
 		"contracts": "builtin_contracts.vx",
 		"ops":       "ops.vx",
+		"char":      "char_basics.vxc",
 	}
 	if fileName, ok := special[name]; ok {
 		data, err := os.ReadFile(filepath.Join(preludeDir, fileName))

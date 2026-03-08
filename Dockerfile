@@ -22,6 +22,6 @@ EXPOSE 8080
 ENV PORT=8080
 ENV SANDBOX_ENABLED=false
 ENV OLLAMA_URL=http://host.docker.internal:11434
-ENV OLLAMA_MODEL=qwen3.5:0.8b
+ENV OLLAMA_MODEL=qwen3.5:2b
 
 CMD ["/usr/local/bin/vex-api"]

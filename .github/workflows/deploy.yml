@@ -86,6 +86,22 @@ jobs:
 
           $SCP vex-api root@${{ env.SERVER_HOST }}:/tmp/vex-api-new
 
+          # Sync scripts (update script, systemd units)
+          $SSH "mkdir -p /opt/vex-api/scripts"
+          $SCP scripts/vex-update.sh scripts/vex-update.service scripts/vex-update.timer scripts/vex-api.service \
+            root@${{ env.SERVER_HOST }}:/opt/vex-api/scripts/
+          $SSH "chmod +x /opt/vex-api/scripts/vex-update.sh"
+
+          # Install systemd units for auto-update timer
+          $SSH << 'INSTALL_TIMER'
+            set -e
+            cp /opt/vex-api/scripts/vex-update.service /etc/systemd/system/
+            cp /opt/vex-api/scripts/vex-update.timer /etc/systemd/system/
+            cp /opt/vex-api/scripts/vex-api.service /etc/systemd/system/
+            systemctl daemon-reload
+            systemctl enable --now vex-update.timer
+          INSTALL_TIMER
+
           $SSH << 'DEPLOY'
             set -e
             DEPLOY_PATH=/opt/vex-api
