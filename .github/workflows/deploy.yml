@@ -13,7 +13,6 @@ jobs:
   deploy:
     name: Build & Deploy (amd64)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -30,242 +29,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          cat > ~/.ssh/config << 'SSHCFG'
-          Host deploy-target
-            HostName ${{ env.SERVER_HOST }}
-            User root
-            IdentityFile ~/.ssh/deploy_key
-            StrictHostKeyChecking accept-new
-            UserKnownHostsFile ~/.ssh/known_hosts
-            ConnectTimeout 10
-          SSHCFG
-          sed -i "s/\${{ env.SERVER_HOST }}/${{ env.SERVER_HOST }}/g" ~/.ssh/config
-          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Handle rescue mode (if active)
-        run: |
-          SSH="ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
-
-          # Check if server is in rescue mode
-          IS_RESCUE=$($SSH 'grep -qi "hetzner rescue" /etc/motd 2>/dev/null && echo yes || echo no') || IS_RESCUE="no"
-
-          if [ "$IS_RESCUE" != "yes" ]; then
-            echo "✅ Server is in normal mode — skipping rescue handler"
-            exit 0
-          fi
-
-          echo "🔧 Server is in RESCUE MODE — installing fresh Debian 12..."
-
-          # Install OS via installimage
-          $SSH << 'RESCUE'
-            set -e
-
-            # Find latest Debian 12 image
-            IMAGE=$(ls /root/.oldroot/nfs/images/Debian-12*-amd64-base.tar.gz 2>/dev/null | sort -V | tail -1)
-            if [ -z "$IMAGE" ]; then
-              IMAGE=$(ls /root/images/Debian-12*-amd64-base.tar.gz 2>/dev/null | sort -V | tail -1)
-            fi
-            if [ -z "$IMAGE" ]; then
-              echo "❌ No Debian 12 image found. Available images:"
-              ls /root/.oldroot/nfs/images/ 2>/dev/null || ls /root/images/ 2>/dev/null || echo "  (none)"
-              exit 1
-            fi
-            echo "📦 Using image: $IMAGE"
-
-            # Create installimage config
-            cat > /tmp/setup.conf << CONF
-          DRIVE1 /dev/sda
-          BOOTLOADER grub
-          HOSTNAME vex-api
-          PART /boot ext4 1G
-          PART swap swap 4G
-          PART / ext4 all
-          IMAGE $IMAGE
-          CONF
-
-            echo "🔨 Running installimage..."
-            installimage -a -c /tmp/setup.conf
-
-            echo "✅ OS installed — rebooting..."
-          RESCUE
-
-          # Trigger reboot (will disconnect SSH)
-          $SSH 'reboot' 2>/dev/null || true
-
-          echo "⏳ Waiting 60s for server to reboot into fresh OS..."
-          sleep 60
-
-          # Clear old host key (installimage generates new host keys)
-          ssh-keygen -R "${{ env.SERVER_HOST }}" -f ~/.ssh/known_hosts 2>/dev/null || true
-          > ~/.ssh/known_hosts
-
-          # Wait for SSH to come back (up to 5 minutes)
-          echo "⏳ Waiting for SSH..."
-          for i in $(seq 1 30); do
-            ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-            if ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }} 'echo OK' 2>/dev/null; then
-              echo "✅ Server is back online with fresh Debian 12"
-              exit 0
-            fi
-            echo "  Attempt $i/30 — retrying in 10s..."
-            sleep 10
-          done
-
-          echo "❌ Server did not come back after reboot"
-          exit 1
-
-      - name: Provision server environment
-        run: |
-          SSH="ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
-
-          $SSH << 'PROVISION'
-            set -e
-
-            # ── Directories ──
-            mkdir -p /opt/vex-api /opt/vex/bin /opt/vex/lib/runtime /opt/vex/lib/std /tmp/vex-sandbox
-
-            # ── Service user ──
-            id -u vex >/dev/null 2>&1 || useradd -r -m -s /bin/bash vex
-            chown -R vex:vex /opt/vex-api /tmp/vex-sandbox
-
-            # ── System packages ──
-            NEED_INSTALL=""
-            command -v nginx    >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL nginx"
-            command -v certbot  >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL certbot"
-            command -v go       >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL go"
-            command -v rustc    >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL rust"
-            command -v zig      >/dev/null 2>&1 || NEED_INSTALL="$NEED_INSTALL zig"
-
-            if [ -n "$NEED_INSTALL" ]; then
-              echo "📦 Installing:$NEED_INSTALL"
-              apt-get update -qq
-              apt-get install -y -qq curl wget tar xz-utils
-
-              if echo "$NEED_INSTALL" | grep -q "nginx"; then
-                apt-get install -y -qq nginx
-              fi
-              if echo "$NEED_INSTALL" | grep -q "certbot"; then
-                apt-get install -y -qq certbot python3-certbot-nginx
-              fi
-
-              if echo "$NEED_INSTALL" | grep -q "go"; then
-                GO_VER="1.23.4"
-                wget -q "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz" -O /tmp/go.tar.gz
-                rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
-                echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
-                export PATH=$PATH:/usr/local/go/bin
-                echo "  ✅ $(go version)"
-              fi
-
-              if echo "$NEED_INSTALL" | grep -q "rust"; then
-                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-                . "$HOME/.cargo/env"
-                echo "  ✅ $(rustc --version)"
-              fi
-
-              if echo "$NEED_INSTALL" | grep -q "zig"; then
-                ZIG_VER="0.13.0"
-                wget -q "https://ziglang.org/download/${ZIG_VER}/zig-linux-x86_64-${ZIG_VER}.tar.xz" -O /tmp/zig.tar.xz
-                mkdir -p /opt/zig && tar -C /opt/zig --strip-components=1 -xf /tmp/zig.tar.xz && rm /tmp/zig.tar.xz
-                ln -sf /opt/zig/zig /usr/local/bin/zig
-                echo "  ✅ Zig $(zig version)"
-              fi
-            fi
-
-            # ── systemd service ──
-            if [ ! -f /etc/systemd/system/vex-api.service ]; then
-              echo "📋 Installing systemd service..."
-              cat > /etc/systemd/system/vex-api.service << 'SVC'
-          [Unit]
-          Description=Vex API Server
-          After=network.target
-
-          [Service]
-          Type=simple
-          User=vex
-          Group=vex
-          WorkingDirectory=/opt/vex-api
-          ExecStart=/opt/vex-api/vex-api
-          Restart=always
-          RestartSec=3
-          EnvironmentFile=/opt/vex-api/.env
-          NoNewPrivileges=true
-          ProtectSystem=strict
-          ProtectHome=true
-          ReadWritePaths=/tmp/vex-sandbox /opt/vex
-          LimitNOFILE=65535
-          MemoryMax=512M
-          CPUQuota=200%
-
-          [Install]
-          WantedBy=multi-user.target
-          SVC
-              systemctl daemon-reload
-              systemctl enable vex-api
-            fi
-
-            # ── nginx ──
-            if [ ! -f /etc/nginx/sites-available/vex-api.conf ]; then
-              echo "📋 Installing nginx config..."
-              # Rate limit zone (must be at http level)
-              cat > /etc/nginx/conf.d/rate-limit.conf << 'RL'
-          limit_req_zone $binary_remote_addr zone=api:10m rate=60r/m;
-          RL
-
-              cat > /etc/nginx/sites-available/vex-api.conf << 'NGX'
-          server {
-              listen 80;
-              server_name api.vex-lang.org;
-              location /.well-known/acme-challenge/ { root /var/www/html; }
-              location / { return 301 https://$host$request_uri; }
-          }
-          server {
-              listen 443 ssl http2;
-              server_name api.vex-lang.org;
-              ssl_certificate     /etc/letsencrypt/live/api.vex-lang.org/fullchain.pem;
-              ssl_certificate_key /etc/letsencrypt/live/api.vex-lang.org/privkey.pem;
-              ssl_protocols TLSv1.2 TLSv1.3;
-              ssl_prefer_server_ciphers on;
-              add_header X-Frame-Options "DENY" always;
-              add_header X-Content-Type-Options "nosniff" always;
-              add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-              location /api/website/ {
-                  limit_req zone=api burst=20 nodelay;
-                  proxy_pass http://127.0.0.1:8080;
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
-                  proxy_read_timeout 30s;
-                  proxy_send_timeout 10s;
-                  proxy_connect_timeout 5s;
-              }
-              location / { return 404; }
-          }
-          NGX
-              rm -f /etc/nginx/sites-enabled/default
-              ln -sf /etc/nginx/sites-available/vex-api.conf /etc/nginx/sites-enabled/
-              # Start nginx without SSL first (cert doesn't exist yet)
-              # Create self-signed temp cert so nginx starts
-              if [ ! -d /etc/letsencrypt/live/api.vex-lang.org ]; then
-                mkdir -p /etc/letsencrypt/live/api.vex-lang.org
-                openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-                  -keyout /etc/letsencrypt/live/api.vex-lang.org/privkey.pem \
-                  -out /etc/letsencrypt/live/api.vex-lang.org/fullchain.pem \
-                  -subj "/CN=api.vex-lang.org" 2>/dev/null
-              fi
-              nginx -t && systemctl restart nginx
-              # Get real cert (may fail if DNS not ready)
-              certbot --nginx -d api.vex-lang.org --non-interactive --agree-tos \
-                -m admin@vex-lang.org 2>/dev/null || echo "⚠️ Certbot skipped (DNS may not be ready)"
-            fi
-
-            echo "✅ Server environment ready"
-          PROVISION
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Sync Vex compiler from latest release
         run: |
-          SSH="ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
+          SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
 
           $SSH << 'SYNC_VEX'
             set -e
@@ -313,7 +81,7 @@ jobs:
 
       - name: Deploy
         run: |
-          SSH="ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
+          SSH="ssh -i ~/.ssh/deploy_key root@${{ env.SERVER_HOST }}"
           SCP="scp -i ~/.ssh/deploy_key"
 
           $SCP vex-api root@${{ env.SERVER_HOST }}:/tmp/vex-api-new
@@ -329,31 +97,10 @@ jobs:
             # Swap
             chmod +x /tmp/vex-api-new
             mv /tmp/vex-api-new $DEPLOY_PATH/vex-api
-
-            # Ensure .env exists
-            if [ ! -f $DEPLOY_PATH/.env ]; then
-              echo "⚠️ No .env found — creating minimal config"
-              cat > $DEPLOY_PATH/.env << 'ENV'
-          PORT=8080
-          ALLOWED_ORIGIN=https://vex-lang.org
-          VEX_BINARY=/opt/vex/bin/vex
-          SANDBOX_ENABLED=false
-          AI_BACKEND=groq
-          GROQ_API_KEY=
-          GROQ_MODEL=openai/gpt-oss-120b
-          OLLAMA_URL=http://127.0.0.1:11434
-          OLLAMA_MODEL=qwen3.5:2b
-          ENV
-              chown vex:vex $DEPLOY_PATH/.env
-              chmod 600 $DEPLOY_PATH/.env
-              echo "⚠️ Edit /opt/vex-api/.env to add GROQ_API_KEY and other secrets"
-            fi
-
-            chown vex:vex $DEPLOY_PATH/vex-api
             systemctl restart vex-api
 
-            # Health check (15s timeout)
-            for i in $(seq 1 15); do
+            # Health check
+            for i in $(seq 1 10); do
               curl -sf http://127.0.0.1:8080/api/website/health > /dev/null 2>&1 && echo "✅ Deploy OK" && exit 0
               sleep 1
             done
