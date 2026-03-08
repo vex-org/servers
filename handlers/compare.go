@@ -154,7 +154,7 @@ func ComparePreset(c fiber.Ctx) error {
 	}
 
 	wg.Wait()
-	return c.JSON(fiber.Map{"results": results})
+	return c.JSON(fiber.Map{"results": results, "versions": executor.ToolVersions})
 }
 
 // POST /api/website/compare
@@ -273,6 +273,7 @@ func Compare(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"results":        results,
 		"ai_disclaimer":  "Go/Rust/Zig code was AI-generated and may not be idiomatic.",
+		"versions":       executor.ToolVersions,
 	})
 }
 

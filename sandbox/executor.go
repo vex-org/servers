@@ -39,6 +39,7 @@ type Executor struct {
 	MemoryLimitMB  int
 	TmpDir         string
 	VexVersion     string
+	ToolVersions   map[string]string
 }
 
 func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
@@ -54,7 +55,7 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 		}
 	}
 
-	return &Executor{
+	e := &Executor{
 		VexBinary:      vexBin,
 		SandboxBinary:  sandboxBin,
 		SandboxEnabled: sandboxEnabled,
@@ -62,6 +63,43 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 		MemoryLimitMB:  256,
 		TmpDir:         tmpDir,
 		VexVersion:     vexVersion,
+		ToolVersions:   make(map[string]string),
+	}
+	e.detectToolVersions()
+	return e
+}
+
+// detectToolVersions probes installed compilers and caches their version strings.
+func (e *Executor) detectToolVersions() {
+	e.ToolVersions["vex"] = e.VexVersion
+
+	type probe struct {
+		name string
+		bin  string
+		args []string
+	}
+	probes := []probe{
+		{"go", "go", []string{"version"}},
+		{"rust", "rustc", []string{"--version"}},
+		{"zig", "zig", []string{"version"}},
+	}
+	for _, p := range probes {
+		if out, err := exec.Command(p.bin, p.args...).CombinedOutput(); err == nil {
+			v := strings.TrimSpace(string(out))
+			// Normalise: "go version go1.22.1 darwin/arm64" → "go1.22.1"
+			if p.name == "go" {
+				if parts := strings.Fields(v); len(parts) >= 3 {
+					v = parts[2] // "go1.22.1"
+				}
+			}
+			// "rustc 1.78.0 (...)" → "rustc 1.78.0"
+			if p.name == "rust" {
+				if idx := strings.Index(v, "("); idx > 0 {
+					v = strings.TrimSpace(v[:idx])
+				}
+			}
+			e.ToolVersions[p.name] = v
+		}
 	}
 }
 
