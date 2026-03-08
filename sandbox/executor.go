@@ -129,10 +129,19 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	}
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
 
-	// Find compiled binary (vex-builds/main or ./main)
+	// Parse compile-time timing from vex compiler output if available
+	compileOutput := compStdout.String() + compStderr.String()
+	if m := vexCompileTimeRe.FindStringSubmatch(compileOutput); len(m) == 3 {
+		result.CompileTimeMs = durationToMs(m[1], m[2])
+	}
+
+	// Find compiled binary — vex outputs to vex-builds/<basename>
 	binFile := ""
+	baseName := strings.TrimSuffix(filepath.Base(srcFile), filepath.Ext(srcFile))
 	for _, candidate := range []string{
+		filepath.Join(workDir, "vex-builds", baseName),
 		filepath.Join(workDir, "vex-builds", "main"),
+		filepath.Join(workDir, baseName),
 		filepath.Join(workDir, "main"),
 	} {
 		if _, err := os.Stat(candidate); err == nil {
