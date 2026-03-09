@@ -2,6 +2,7 @@
 
 Oracle Cloud ARM (Ampere A1, 4 OCPU / 24GB RAM, free tier) üzerinde çalışan backend servisleri.
 
+
 ## Mimari
 
 ```
