@@ -15,19 +15,38 @@ useradd -r -m -s /bin/bash vex || true
 mkdir -p /opt/vex-api /opt/vex/bin /tmp/vex-sandbox
 chown -R vex:vex /opt/vex-api /tmp/vex-sandbox
 
-# Install Go 1.23
-GO_VERSION="1.23.4"
-wget -q "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" -O /tmp/go.tar.gz
+# Install Go
+GO_VERSION="1.26.1"
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64) GO_ARCH="amd64" ;;
+    aarch64|arm64) GO_ARCH="arm64" ;;
+    *) echo "Unsupported Go arch: $ARCH" >&2; exit 1 ;;
+esac
+wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -O /tmp/go.tar.gz
 rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
+ln -sf /usr/local/go/bin/go /usr/local/bin/go
+ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
 source /etc/profile.d/go.sh
 
 # Install Rust (for benchmark comparison)
 su - vex -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+su - vex -c 'source "$HOME/.cargo/env" && rustup update stable && rustup default stable'
+RUSTC_BIN=$(su - vex -c 'source "$HOME/.cargo/env" && rustup which rustc')
+CARGO_BIN=$(dirname "$RUSTC_BIN")/cargo
+ln -sf "$RUSTC_BIN" /usr/local/bin/rustc
+ln -sf "$CARGO_BIN" /usr/local/bin/cargo
 
 # Install Zig
-ZIG_VERSION="0.13.0"
-wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-aarch64-${ZIG_VERSION}.tar.xz" -O /tmp/zig.tar.xz
+ZIG_VERSION="0.14.0"
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64) ZIG_ARCH="x86_64" ;;
+    aarch64|arm64) ZIG_ARCH="aarch64" ;;
+    *) echo "Unsupported Zig arch: $ARCH" >&2; exit 1 ;;
+esac
+wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz" -O /tmp/zig.tar.xz
 mkdir -p /opt/zig && tar -C /opt/zig --strip-components=1 -xf /tmp/zig.tar.xz
 ln -sf /opt/zig/zig /usr/local/bin/zig
 

@@ -207,7 +207,7 @@ func (s *Server) promptDebug(id any, args map[string]string) jsonRPCResponse {
 }
 
 // vexExpertPrompt is the comprehensive system prompt for Vex AI interactions
-var vexExpertPrompt = `You are an expert Vex programming language assistant with deep knowledge of the language (Vex v0.3.1).
+var vexExpertPrompt = `You are an expert Vex programming language assistant with deep knowledge of the language (Vex v0.3.2).
 
 ## Vex Language Quick Reference
 

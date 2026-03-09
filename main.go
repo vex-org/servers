@@ -94,7 +94,7 @@ func main() {
 		chunks, terms := ragIdx.Stats()
 		return c.JSON(fiber.Map{
 			"name":        "vex-lang-mcp",
-			"version":     "0.3.1",
+			"version":     "0.3.2",
 			"description": "Vex Language MCP Server with RAG knowledge base",
 			"transport":   []string{"streamable-http"},
 			"stats":       fiber.Map{"chunks": chunks, "terms": terms},

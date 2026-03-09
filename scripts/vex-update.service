@@ -4,6 +4,7 @@ Description=Update Vex compiler to latest release
 [Service]
 Type=oneshot
 ExecStart=/opt/vex-api/scripts/vex-update.sh
-Environment=VEX_DIR=/opt/vex
-Environment=VEX_REPO=meftunca/vex
+Environment=VEX_USER=vex
+Environment=VEX_HOME=/home/vex/.vex
+Environment=VEX_REPO=vex-org/releases
 TimeoutStartSec=180

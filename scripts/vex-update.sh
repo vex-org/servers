@@ -3,9 +3,11 @@
 # Called by: systemd timer (every 15min) + vex-api ExecStartPre
 set -euo pipefail
 
-VEX_DIR="${VEX_DIR:-/opt/vex}"
-VEX_BIN="$VEX_DIR/bin/vex"
-REPO="${VEX_REPO:-meftunca/vex}"
+VEX_USER="${VEX_USER:-vex}"
+VEX_HOME="${VEX_HOME:-/home/${VEX_USER}/.vex}"
+VEX_BIN="${VEX_BIN:-${VEX_HOME}/bin/vex}"
+VEX_LINK_BIN="${VEX_LINK_BIN:-/usr/local/bin/vex}"
+REPO="${VEX_REPO:-vex-org/releases}"
 LOCK_FILE="/tmp/vex-update.lock"
 LOG_TAG="vex-update"
 
@@ -71,19 +73,58 @@ if ! tar -tzf "$TMPDIR/release.tar.gz" >/dev/null 2>&1; then
     exit 1
 fi
 
-tar -xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR" --strip-components=1
-
 # Backup current binary
 if [ -f "$VEX_BIN" ]; then
     cp "$VEX_BIN" "$VEX_BIN.bak"
 fi
 
+# Extract package and locate root directory
+tar -xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR"
+PKG_DIR="$TMPDIR"
+if [ ! -f "$PKG_DIR/bin/vex" ]; then
+    PKG_DIR=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d -name 'vex-*' | head -1)
+fi
+if [ -z "$PKG_DIR" ] || [ ! -f "$PKG_DIR/bin/vex" ]; then
+    log "Failed to locate extracted package directory"
+    exit 1
+fi
+
 # Install
-mkdir -p "$VEX_DIR/bin" "$VEX_DIR/lib/runtime" "$VEX_DIR/lib/std"
-cp "$TMPDIR/bin/"* "$VEX_DIR/bin/" 2>/dev/null || true
-chmod +x "$VEX_DIR/bin/"*
-cp -r "$TMPDIR/lib/runtime/"* "$VEX_DIR/lib/runtime/" 2>/dev/null || true
-cp -r "$TMPDIR/lib/std/"* "$VEX_DIR/lib/std/" 2>/dev/null || true
+mkdir -p "$VEX_HOME/bin" "$VEX_HOME/lib"
+
+for bin in vex vex-lsp vex-formatter vex-doc vex-pm; do
+    if [ -f "$PKG_DIR/bin/$bin" ]; then
+        cp "$PKG_DIR/bin/$bin" "$VEX_HOME/bin/$bin"
+        chmod +x "$VEX_HOME/bin/$bin"
+    fi
+done
+
+if [ -d "$PKG_DIR/lib/std" ]; then
+    rm -rf "$VEX_HOME/lib/std"
+    cp -r "$PKG_DIR/lib/std" "$VEX_HOME/lib/std"
+fi
+
+if [ -d "$PKG_DIR/lib/runtime" ]; then
+    rm -rf "$VEX_HOME/lib/runtime"
+    cp -r "$PKG_DIR/lib/runtime" "$VEX_HOME/lib/runtime"
+fi
+
+cat > "$VEX_HOME/config.json" <<EOF
+{
+  "version": "${LATEST}",
+  "vex_home": "${VEX_HOME}",
+  "std_path": "${VEX_HOME}/lib/std",
+  "runtime_path": "${VEX_HOME}/lib/runtime",
+  "tools": ["vex", "vex-lsp"]
+}
+EOF
+
+mkdir -p "$(dirname "$VEX_LINK_BIN")"
+ln -sfn "$VEX_HOME/bin/vex" "$VEX_LINK_BIN"
+
+if id "$VEX_USER" >/dev/null 2>&1; then
+    chown -R "$VEX_USER:$VEX_USER" "$VEX_HOME"
+fi
 
 # Verify new binary works
 if "$VEX_BIN" --version >/dev/null 2>&1; then

@@ -106,9 +106,17 @@ sudo apt install -y libllvm21 llvm-21-dev
 
 ### 4.3 Go
 ```bash
-GO_VERSION="1.23.0"
-wget "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz"
-sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-arm64.tar.gz"
+GO_VERSION="1.26.1"
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) GO_ARCH="amd64" ;;
+  aarch64|arm64) GO_ARCH="arm64" ;;
+  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+esac
+wget "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 echo 'export PATH="/usr/local/go/bin:$PATH"' | sudo tee /etc/profile.d/go.sh
 source /etc/profile.d/go.sh
 go version
@@ -118,15 +126,25 @@ go version
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+rustup update stable
+rustup default stable
+sudo ln -sf "$(rustup which rustc)" /usr/local/bin/rustc
+sudo ln -sf "$(dirname "$(rustup which rustc)")/cargo" /usr/local/bin/cargo
 rustc --version
 ```
 
 ### 4.5 Zig
 ```bash
-ZIG_VERSION="0.13.0"
-wget "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-aarch64-${ZIG_VERSION}.tar.xz"
-sudo tar -C /opt -xf "zig-linux-aarch64-${ZIG_VERSION}.tar.xz"
-sudo ln -s "/opt/zig-linux-aarch64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+ZIG_VERSION="0.14.0"
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ZIG_ARCH="x86_64" ;;
+  aarch64|arm64) ZIG_ARCH="aarch64" ;;
+  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+esac
+wget "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+sudo tar -C /opt -xf "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+sudo ln -s "/opt/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}/zig" /usr/local/bin/zig
 zig version
 ```
 
