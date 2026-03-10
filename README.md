@@ -118,7 +118,7 @@ Model Context Protocol — VS Code / Cursor / AI agent entegrasyonu.
 
 ### `GET /api/website/health`
 ```json
-{ "status": "ok", "uptime": 86400, "arch": "arm64", "os": "linux", "compilers": { "vex": "0.3.2", "go": "go1.23", "rustc": "1.82", "zig": "0.13" } }
+{ "status": "ok", "uptime": 86400, "arch": "arm64", "os": "linux", "compilers": { "vex": "0.3.3", "go": "go1.23", "rustc": "1.82", "zig": "0.13" } }
 ```
 
 ## Rate Limiting
