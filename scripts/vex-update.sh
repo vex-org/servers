@@ -28,9 +28,15 @@ case "$ARCH" in
     *)       log "Unsupported arch: $ARCH"; exit 0 ;;
 esac
 
-# Fetch latest release tag
-LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" \
+# Fetch latest release tag (includes pre-releases: rc, alpha, beta)
+LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=1" \
     | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//') || true
+
+# Fallback to /releases/latest if list endpoint fails
+if [ -z "$LATEST" ]; then
+    LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" \
+        | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//') || true
+fi
 
 if [ -z "$LATEST" ]; then
     log "Could not fetch latest release tag, skipping"
@@ -43,7 +49,7 @@ LATEST_VER=$(echo "$LATEST" | sed 's/^v//')
 # Check current version
 CURRENT=""
 if [ -f "$VEX_BIN" ]; then
-    CURRENT=$("$VEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+    CURRENT=$("$VEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' || true)
 fi
 
 if [ "$CURRENT" = "$LATEST_VER" ]; then
