@@ -231,7 +231,7 @@ func (s *Server) handleInitialize(req jsonRPCRequest) jsonRPCResponse {
 			"protocolVersion": "2024-11-05",
 			"serverInfo": mcpServerInfo{
 				Name:    "vex-lang-mcp",
-				Version: "0.3.2",
+				Version: "0.4.0-rc.1",
 			},
 			"capabilities": mcpCapabilities{
 				Tools:     &mcpToolsCap{},
