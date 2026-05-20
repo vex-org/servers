@@ -14,6 +14,8 @@ RestartSec=5
 
 # Environment (ignore if missing)
 EnvironmentFile=-/opt/vex-api/.env
+# LLVM location for AOT compilation — Ubuntu 24.04 installs to /usr/lib/llvm-22
+Environment=LLVM_SYS_221_PREFIX=/usr/lib/llvm-22
 
 # Resource limits
 LimitNOFILE=65535
