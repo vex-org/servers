@@ -106,6 +106,18 @@ curl -sfL --max-time 120 "$URL" -o "$TMPDIR/release.tar.gz" || {
     exit 1
 }
 
+# Verify SHA256 checksum if available
+SHA_URL="${URL}.sha256"
+if curl -sfL --max-time 10 "$SHA_URL" -o "$TMPDIR/release.tar.gz.sha256" 2>/dev/null; then
+    EXPECTED=$(awk '{print $1}' "$TMPDIR/release.tar.gz.sha256")
+    ACTUAL=$(sha256sum "$TMPDIR/release.tar.gz" | awk '{print $1}')
+    if [ "$EXPECTED" != "$ACTUAL" ]; then
+        log "SHA256 mismatch (expected=$EXPECTED actual=$ACTUAL), aborting"
+        exit 1
+    fi
+    log "SHA256 verified OK"
+fi
+
 # Verify tarball is valid
 if ! tar -tzf "$TMPDIR/release.tar.gz" >/dev/null 2>&1; then
     log "Invalid tarball, aborting"
@@ -165,7 +177,7 @@ if id "$VEX_USER" >/dev/null 2>&1; then
     chown -R "$VEX_USER:$VEX_USER" "$VEX_HOME"
 fi
 
-# Verify new binary works
+# Verify new binary works — capture stderr to diagnose GLIBC/dep failures
 if "$VEX_BIN" --version >/dev/null 2>&1; then
     NEW_VER=$("$VEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' || echo "$LATEST_VER")
     log "Vex updated to $NEW_VER"
@@ -177,8 +189,10 @@ if "$VEX_BIN" --version >/dev/null 2>&1; then
         systemctl restart vex-api 2>/dev/null && log "vex-api restarted" || log "WARNING: failed to restart vex-api"
     fi
 else
-    # Rollback
-    log "New binary failed verification, rolling back"
+    VERIFY_ERR=$("$VEX_BIN" --version 2>&1 || true)
+    log "New binary failed verification: ${VERIFY_ERR}"
+    log "System libc: $(ldd --version 2>&1 | head -1 || true)"
+    log "Rolling back to previous version"
     if [ -f "$VEX_BIN.bak" ]; then
         mv "$VEX_BIN.bak" "$VEX_BIN"
     fi
