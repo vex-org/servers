@@ -130,7 +130,9 @@ func validOptLevel(level string) string {
 	}
 }
 
-// RunVex compiles Vex to native binary then runs it (AOT for fair benchmark)
+// RunVex compiles Vex to a native binary then runs it (pure AOT — fair benchmark).
+// Timing mirrors Go/Rust/Zig exactly: compile and run are separate processes;
+// UserTimeMs/SysTimeMs reflect only the final binary, not LLVM compilation.
 func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	opt := validOptLevel(optLevel)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
@@ -141,41 +143,30 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 
 	result := &RunResult{}
 
-	// Compile: vex compile -O{level} <file>
+	// ── Step 1: Compile ────────────────────────────────────────────────────
 	start := time.Now()
-	compileCmd := e.buildCommand(e.VexBinary, []string{"compile", "-" + opt, srcFile}, workDir)
+	compileCmd, cancelCompile := e.buildCommand(e.VexBinary, []string{"compile", "-" + opt, srcFile}, workDir)
+	defer cancelCompile()
 	var compStdout, compStderr bytes.Buffer
 	compileCmd.Stdout = &compStdout
 	compileCmd.Stderr = &compStderr
-	if err := compileCmd.Run(); err != nil {
-		compileErr := compStdout.String() + compStderr.String()
-		// AOT compile failed — check if it's a linker error
-		if strings.Contains(compileErr, "Linking failed") || strings.Contains(compileErr, "cannot find -lvex_runtime_core") {
-			// Runtime .a missing — use JIT mode (no linking needed)
-			return e.runVexJIT(code, opt)
-		}
-		// Non-linker failure — fall back to --no-jit AOT mode
-		jitResult, jitErr := e.runVexNoJIT(code, opt)
-		if jitErr != nil {
-			result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
-			result.Stderr = compileErr
-			result.ExitCode = 1
-			result.VexVersion = e.VexVersion
-			return result, nil
-		}
-		return jitResult, nil
-	}
+	compileErr := compileCmd.Run()
 	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
-
-	// Parse compile-time timing from vex compiler output if available
+	// Override with compiler's own reported timing when available
 	compileOutput := compStdout.String() + compStderr.String()
 	if m := vexCompileTimeRe.FindStringSubmatch(compileOutput); len(m) == 3 {
 		result.CompileTimeMs = durationToMs(m[1], m[2])
 	}
+	if compileErr != nil {
+		result.Stderr = compileOutput
+		result.ExitCode = 1
+		result.VexVersion = e.VexVersion
+		return result, nil
+	}
 
-	// Find compiled binary — vex outputs to vex-builds/<basename>
-	binFile := ""
+	// ── Step 2: Locate binary ──────────────────────────────────────────────
 	baseName := strings.TrimSuffix(filepath.Base(srcFile), filepath.Ext(srcFile))
+	binFile := ""
 	for _, candidate := range []string{
 		filepath.Join(workDir, "vex-builds", baseName),
 		filepath.Join(workDir, "vex-builds", "main"),
@@ -188,14 +179,17 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 		}
 	}
 	if binFile == "" {
-		// Fallback: JIT mode
-		return e.runVexJIT(code, opt)
+		result.Stderr = "binary not found after successful compile"
+		result.ExitCode = 1
+		result.VexVersion = e.VexVersion
+		return result, nil
 	}
 	result.BinaryKB = e.BinarySize(binFile)
 
-	// Run
+	// ── Step 3: Run binary — timing mirrors Go/Rust/Zig (binary only) ─────
 	start = time.Now()
-	runCmd := e.buildCommand(binFile, nil, workDir)
+	runCmd, cancelRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelRun()
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr
@@ -207,7 +201,7 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
-	result.Stderr = result.Stderr + stderr.String()
+	result.Stderr = stderr.String()
 	result.VexVersion = e.VexVersion
 	return result, nil
 }
@@ -248,7 +242,8 @@ func (e *Executor) EmitIR(code string, optLevel string) (*RunResult, error) {
 	result := &RunResult{}
 
 	start := time.Now()
-	cmd := e.buildCommand(e.VexBinary, []string{"compile", "--emit-llvm", "-" + opt, srcFile}, workDir)
+	cmd, cancelCmd := e.buildCommand(e.VexBinary, []string{"compile", "--emit-llvm", "-" + opt, srcFile}, workDir)
+	defer cancelCmd()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -300,7 +295,8 @@ func (e *Executor) RunGo(code string, optLevel string) (*RunResult, error) {
 
 	// Compile
 	start := time.Now()
-	compileCmd := e.buildCommand("go", args, workDir)
+	compileCmd, cancelGoCompile := e.buildCommand("go", args, workDir)
+	defer cancelGoCompile()
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	compileCmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, ".cache"))
@@ -315,7 +311,8 @@ func (e *Executor) RunGo(code string, optLevel string) (*RunResult, error) {
 
 	// Run
 	start = time.Now()
-	runCmd := e.buildCommand(binFile, nil, workDir)
+	runCmd, cancelGoRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelGoRun()
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr
@@ -348,7 +345,8 @@ func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 
 	// Compile
 	start := time.Now()
-	compileCmd := e.buildCommand("rustc", []string{"-C", "opt-level=" + rustOpt, "-C", "incremental=" + filepath.Join(workDir, ".incr"), "-o", binFile, srcFile}, workDir)
+	compileCmd, cancelRustCompile := e.buildCommand("rustc", []string{"-C", "opt-level=" + rustOpt, "-C", "incremental=" + filepath.Join(workDir, ".incr"), "-o", binFile, srcFile}, workDir)
+	defer cancelRustCompile()
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
@@ -362,7 +360,8 @@ func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 
 	// Run
 	start = time.Now()
-	runCmd := e.buildCommand(binFile, nil, workDir)
+	runCmd, cancelRustRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelRustRun()
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr
@@ -395,7 +394,8 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 
 	start := time.Now()
 	zigCacheDir := filepath.Join(workDir, ".zig-cache")
-	compileCmd := e.buildCommand("zig", []string{"build-exe", zigOpt, "--cache-dir", zigCacheDir, "--global-cache-dir", zigCacheDir, "-femit-bin=" + binFile, srcFile}, workDir)
+	compileCmd, cancelZigCompile := e.buildCommand("zig", []string{"build-exe", zigOpt, "--cache-dir", zigCacheDir, "--global-cache-dir", zigCacheDir, "-femit-bin=" + binFile, srcFile}, workDir)
+	defer cancelZigCompile()
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr
 	if err := compileCmd.Run(); err != nil {
@@ -408,7 +408,8 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 	result.BinaryKB = e.BinarySize(binFile)
 
 	start = time.Now()
-	runCmd := e.buildCommand(binFile, nil, workDir)
+	runCmd, cancelZigRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelZigRun()
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr
@@ -450,7 +451,8 @@ func (e *Executor) runCompiler(code, compiler, subCmd, ext string) (*RunResult, 
 	args = append(args, srcFile)
 
 	start := time.Now()
-	cmd := e.buildCommand(compiler, args, workDir)
+	cmd, cancelCmd := e.buildCommand(compiler, args, workDir)
+	defer cancelCmd()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -486,9 +488,8 @@ func (e *Executor) writeSource(code, ext string) (workDir, srcFile string, clean
 	return workDir, srcFile, cleanup, nil
 }
 
-func (e *Executor) buildCommand(bin string, args []string, workDir string) *exec.Cmd {
+func (e *Executor) buildCommand(bin string, args []string, workDir string) (*exec.Cmd, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.Timeout)
-	_ = cancel // context auto-cancels on timeout
 
 	if e.SandboxEnabled {
 		nsjailArgs := []string{
@@ -508,12 +509,12 @@ func (e *Executor) buildCommand(bin string, args []string, workDir string) *exec
 		nsjailArgs = append(nsjailArgs, args...)
 		cmd := exec.CommandContext(ctx, e.SandboxBinary, nsjailArgs...)
 		cmd.Dir = workDir
-		return cmd
+		return cmd, cancel
 	}
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = workDir
-	return cmd
+	return cmd, cancel
 }
 
 func splitArgs(s string) []string {
