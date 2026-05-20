@@ -89,7 +89,7 @@ func main() {
 	// MCP Server (protocol-compliant)
 	mcpGroup := api.Group("/mcp")
 	mcpGroup.Post("/message", mcpSrv.HandleMessage)      // SSE message endpoint
-	mcpGroup.Post("/", mcpSrv.HandleStreamable)           // Streamable HTTP transport
+	mcpGroup.Post("/", mcpSrv.HandleStreamable)           // Streamable HTTP transport...
 	mcpGroup.Get("/info", func(c fiber.Ctx) error {       // MCP server metadata
 		chunks, terms := ragIdx.Stats()
 		return c.JSON(fiber.Map{
