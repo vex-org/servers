@@ -20,9 +20,9 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; logger -t "$LOG_TAG" "$*" 2>/d
 ensure_clang22() {
     if command -v clang-22 >/dev/null 2>&1; then
         log "clang-22 already installed: $(clang-22 --version 2>&1 | head -1)"
-        # Make sure it is the default even if already installed
-        update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-22/bin/clang-22 100 2>/dev/null || true
-        update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-22/bin/clang++-22 100 2>/dev/null || true
+        # apt installs versioned wrappers to /usr/bin/clang-22, not llvm-22/bin/clang-22
+        update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 100 2>/dev/null || true
+        update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 100 2>/dev/null || true
         return 0
     fi
     log "Installing clang-22 for Vex AOT compilation..."
@@ -36,8 +36,9 @@ ensure_clang22() {
                    -o Dir::Etc::sourceparts="-" \
                    -o APT::Get::List-Cleanup="0" 2>/dev/null || true
     if apt-get install -y --no-install-recommends clang-22 lld-22 2>/dev/null; then
-        update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-22/bin/clang-22 100 2>/dev/null || true
-        update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-22/bin/clang++-22 100 2>/dev/null || true
+        # Use /usr/bin/clang-22 (where apt installs the wrapper), NOT llvm-22/bin/clang-22
+        update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 100 2>/dev/null || true
+        update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 100 2>/dev/null || true
         log "clang-22 installed and set as default clang"
     else
         log "WARNING: clang-22 install failed; Vex AOT will fall back to static linking with system clang"

@@ -14,6 +14,9 @@ RestartSec=5
 
 # Environment (ignore if missing)
 EnvironmentFile=-/opt/vex-api/.env
+# vex-update.sh installs the compiler to /home/vex/.vex/bin/vex
+# and symlinks /usr/local/bin/vex; keep this aligned with VEX_HOME in vex-update.service
+Environment=VEX_BINARY=/home/vex/.vex/bin/vex
 # LLVM location for AOT compilation — Ubuntu 24.04 installs to /usr/lib/llvm-22
 Environment=LLVM_SYS_221_PREFIX=/usr/lib/llvm-22
 
