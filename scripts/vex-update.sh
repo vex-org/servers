@@ -13,6 +13,38 @@ LOG_TAG="vex-update"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; logger -t "$LOG_TAG" "$*" 2>/dev/null || true; }
 
+# Ensure clang-22 is available for Vex AOT compilation.
+# vex_runtime.bc is compiled with LLVM 22; an older system clang would fail with
+# "Unknown attribute kind" when linking. We install clang-22 from the LLVM apt
+# repo if it is not already present and wire it up as the default clang.
+ensure_clang22() {
+    if command -v clang-22 >/dev/null 2>&1; then
+        log "clang-22 already installed: $(clang-22 --version 2>&1 | head -1)"
+        # Make sure it is the default even if already installed
+        update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-22/bin/clang-22 100 2>/dev/null || true
+        update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-22/bin/clang++-22 100 2>/dev/null || true
+        return 0
+    fi
+    log "Installing clang-22 for Vex AOT compilation..."
+    command -v wget >/dev/null 2>&1 || apt-get install -y --no-install-recommends wget 2>/dev/null || true
+    . /etc/os-release
+    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+        | gpg --dearmor -o /usr/share/keyrings/llvm.gpg 2>/dev/null || true
+    echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" \
+        > /etc/apt/sources.list.d/llvm-22.list
+    apt-get update -o Dir::Etc::sourcelist="sources.list.d/llvm-22.list" \
+                   -o Dir::Etc::sourceparts="-" \
+                   -o APT::Get::List-Cleanup="0" 2>/dev/null || true
+    if apt-get install -y --no-install-recommends clang-22 lld-22 2>/dev/null; then
+        update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-22/bin/clang-22 100 2>/dev/null || true
+        update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-22/bin/clang++-22 100 2>/dev/null || true
+        log "clang-22 installed and set as default clang"
+    else
+        log "WARNING: clang-22 install failed; Vex AOT will fall back to static linking with system clang"
+    fi
+}
+ensure_clang22 || true
+
 # Prevent concurrent runs
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
