@@ -10,10 +10,20 @@ import (
 // GET /api/website/health
 func Health(c fiber.Ctx) error {
 	compilers := map[string]string{}
+
+	// Always resolve vex version dynamically: vex-update.sh may have swapped
+	// the binary since startup (executor.VexVersion is a startup-time snapshot).
+	vexBin := "vex"
+	if executor != nil && executor.VexBinary != "" {
+		vexBin = executor.VexBinary
+	}
+	if out, err := exec.Command(vexBin, "--version").Output(); err == nil {
+		compilers["vex"] = string(out[:min(len(out), 64)])
+	} else if executor != nil && executor.VexVersion != "" {
+		compilers["vex"] = executor.VexVersion // fallback to cached
+	}
+
 	if executor != nil {
-		if v := executor.VexVersion; v != "" && v != "unknown" {
-			compilers["vex"] = v
-		}
 		if v := executor.ToolVersions["go"]; v != "" && v != "unknown" {
 			compilers["go"] = v
 		}
@@ -26,7 +36,7 @@ func Health(c fiber.Ctx) error {
 	}
 
 	for name, bin := range map[string]string{
-		"vex": "vex", "go": "go", "rustc": "rustc", "zig": "zig",
+		"go": "go", "rustc": "rustc", "zig": "zig",
 	} {
 		if _, ok := compilers[name]; ok {
 			continue

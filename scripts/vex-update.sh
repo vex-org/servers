@@ -167,9 +167,15 @@ fi
 
 # Verify new binary works
 if "$VEX_BIN" --version >/dev/null 2>&1; then
-    NEW_VER=$("$VEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "$LATEST_VER")
+    NEW_VER=$("$VEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' || echo "$LATEST_VER")
     log "Vex updated to $NEW_VER"
     rm -f "$VEX_BIN.bak"
+    # Restart the API server so it picks up the new binary and version.
+    # vex-api caches VexVersion at startup — a restart is the only way to refresh it.
+    if systemctl is-active --quiet vex-api 2>/dev/null; then
+        log "Restarting vex-api to pick up new version..."
+        systemctl restart vex-api 2>/dev/null && log "vex-api restarted" || log "WARNING: failed to restart vex-api"
+    fi
 else
     # Rollback
     log "New binary failed verification, rolling back"
