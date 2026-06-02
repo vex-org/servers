@@ -390,11 +390,11 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 
 	// Map opt level to Zig flag
 	opt := validOptLevel(optLevel)
-	zigOpt := map[string]string{"O0": "-ODebug", "O1": "-OReleaseSafe", "O2": "-OReleaseFast", "O3": "-OReleaseFast"}[opt]
+	zigOptMode := map[string]string{"O0": "Debug", "O1": "ReleaseSafe", "O2": "ReleaseFast", "O3": "ReleaseFast"}[opt]
 
 	start := time.Now()
 	zigCacheDir := filepath.Join(workDir, ".zig-cache")
-	compileCmd, cancelZigCompile := e.buildCommand("zig", []string{"build-exe", zigOpt, "--cache-dir", zigCacheDir, "--global-cache-dir", zigCacheDir, "-femit-bin=" + binFile, srcFile}, workDir)
+	compileCmd, cancelZigCompile := e.buildCommand("zig", []string{"build-exe", "-O", zigOptMode, "--cache-dir", zigCacheDir, "--global-cache-dir", zigCacheDir, "-femit-bin=" + binFile, srcFile}, workDir)
 	defer cancelZigCompile()
 	var compStderr bytes.Buffer
 	compileCmd.Stderr = &compStderr

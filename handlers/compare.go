@@ -277,6 +277,15 @@ func Compare(c fiber.Ctx) error {
 	})
 }
 
+var transpileSystemPrompt = `You are an expert software engineer translating code from the Vex programming language to an idiomatic, correct, and optimized target language. 
+You MUST write production-ready code that matches the semantics of the input Vex code exactly.
+
+Guidelines:
+1. Output ONLY valid, compilable code in the target language.
+2. Do NOT wrap the output in markdown code blocks (e.g., do not use ` + "```" + `zig or ` + "```" + `rust).
+3. Do NOT include any explanations, comments, or extra text.
+4. Match the target language's standard performance guidelines (e.g. for Zig, use std.io.getStdOut().writer() for print/output, ensure no unused imports or variables, and use @Vector/SIMD features where appropriate to match Vex's SIMD behavior).`
+
 // transpileViaAI uses AI to convert Vex code to another language (cached)
 func transpileViaAI(vexCode, targetLang string) (string, error) {
 	key := cacheKey(vexCode, targetLang)
@@ -287,7 +296,7 @@ func transpileViaAI(vexCode, targetLang string) (string, error) {
 	prompt := "Convert this Vex code to idiomatic " + targetLang + ". " +
 		"Return ONLY the code, no markdown, no explanation.\n\n" + vexCode
 
-	resp, err := aiGenerate(prompt)
+	resp, err := aiGenerateTranspile(transpileSystemPrompt, prompt)
 	if err != nil {
 		return "", err
 	}

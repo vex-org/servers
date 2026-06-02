@@ -198,6 +198,19 @@ func aiGenerate(prompt string) (string, error) {
 	return ollamaGenerate(prompt)
 }
 
+// aiGenerateTranspile generates code with a customized system prompt (e.g. for transpilation)
+func aiGenerateTranspile(systemPrompt, prompt string) (string, error) {
+	if aiCfg.Backend == "groq" && aiCfg.GroqKey != "" {
+		resp, err := groqChat(systemPrompt, prompt)
+		if err != nil && isRateLimited(err) && aiCfg.OllamaURL != "" {
+			log.Println("Groq rate limited, falling back to Ollama")
+			return ollamaGenerate(systemPrompt + "\n\n" + prompt)
+		}
+		return resp, err
+	}
+	return ollamaGenerate(systemPrompt + "\n\n" + prompt)
+}
+
 func isRateLimited(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "rate"))
 }
