@@ -390,6 +390,13 @@ func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 
 // RunZig compiles and runs Zig code
 func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
+	// Compatibility check for older Zig versions (e.g., 0.14.0 on the Ubuntu server)
+	zigVer := e.ToolVersions["zig"]
+	if zigVer != "" && !strings.HasPrefix(zigVer, "0.16") {
+		code = strings.ReplaceAll(code, "pub fn main(init: std.process.Init) !void", "pub fn main() !void")
+		code = zigCompatRe.ReplaceAllString(code, "try std.io.getStdOut().writer().writeAll($1);")
+	}
+
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".zig")
 	if err != nil {
 		return nil, err
@@ -650,6 +657,7 @@ var vexJITSetupRe = regexp.MustCompile(`JIT setup:\s*([\d.]+)(s|ms|µs|us|ns)`)
 
 // vexTimingLineRe matches all Vex diagnostic lines that should be stripped from user output
 var vexTimingLineRe = regexp.MustCompile(`(?m)^[^\S\n]*(⏱️|🚀|⚙️|driver::).*\n?`)
+var zigCompatRe = regexp.MustCompile(`try\s+std\.Io\.File\.stdout\(\)\.writeStreamingAll\(init\.io,\s*(.*?)\);`)
 
 // durationToMs converts a value+unit pair to milliseconds
 func durationToMs(value, unit string) float64 {
