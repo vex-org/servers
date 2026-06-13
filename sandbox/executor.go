@@ -82,6 +82,8 @@ func (e *Executor) detectToolVersions() {
 		{"go", "go", []string{"version"}},
 		{"rust", "rustc", []string{"--version"}},
 		{"zig", "zig", []string{"version"}},
+		{"c", "clang", []string{"--version"}},
+		{"cpp", "clang++", []string{"--version"}},
 	}
 	for _, p := range probes {
 		if out, err := exec.Command(p.bin, p.args...).CombinedOutput(); err == nil {
@@ -96,6 +98,15 @@ func (e *Executor) detectToolVersions() {
 			if p.name == "rust" {
 				if idx := strings.Index(v, "("); idx > 0 {
 					v = strings.TrimSpace(v[:idx])
+				}
+			}
+			// "Homebrew clang version 22.1.0" -> "Homebrew clang version 22.1.0"
+			if p.name == "c" || p.name == "cpp" {
+				if lines := strings.Split(v, "\n"); len(lines) > 0 {
+					v = lines[0]
+					if idx := strings.Index(v, " ("); idx > 0 {
+						v = strings.TrimSpace(v[:idx])
+					}
 				}
 			}
 			e.ToolVersions[p.name] = v
@@ -410,6 +421,102 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 	start = time.Now()
 	runCmd, cancelZigRun := e.buildCommand(binFile, nil, workDir)
 	defer cancelZigRun()
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exit.ExitCode()
+		}
+	}
+	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
+	result.Stdout = stdout.String()
+	result.Stderr = result.Stderr + stderr.String()
+	return result, nil
+}
+
+// RunC compiles and runs C code
+func (e *Executor) RunC(code string, optLevel string) (*RunResult, error) {
+	workDir, srcFile, cleanup, err := e.writeSource(code, ".c")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	binFile := filepath.Join(workDir, "program")
+	result := &RunResult{}
+
+	opt := validOptLevel(optLevel)
+	clangOpt := "-" + opt
+
+	// Compile
+	start := time.Now()
+	compileCmd, cancelCompile := e.buildCommand("clang", []string{clangOpt, "-o", binFile, srcFile}, workDir)
+	defer cancelCompile()
+	var compStderr bytes.Buffer
+	compileCmd.Stderr = &compStderr
+	if err := compileCmd.Run(); err != nil {
+		result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+		result.Stderr = compStderr.String()
+		result.ExitCode = 1
+		return result, nil
+	}
+	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.BinaryKB = e.BinarySize(binFile)
+
+	// Run
+	start = time.Now()
+	runCmd, cancelRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelRun()
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exit.ExitCode()
+		}
+	}
+	result.RunTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
+	result.Stdout = stdout.String()
+	result.Stderr = result.Stderr + stderr.String()
+	return result, nil
+}
+
+// RunCpp compiles and runs C++ code
+func (e *Executor) RunCpp(code string, optLevel string) (*RunResult, error) {
+	workDir, srcFile, cleanup, err := e.writeSource(code, ".cpp")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	binFile := filepath.Join(workDir, "program")
+	result := &RunResult{}
+
+	opt := validOptLevel(optLevel)
+	clangOpt := "-" + opt
+
+	// Compile
+	start := time.Now()
+	compileCmd, cancelCompile := e.buildCommand("clang++", []string{clangOpt, "-std=c++20", "-o", binFile, srcFile}, workDir)
+	defer cancelCompile()
+	var compStderr bytes.Buffer
+	compileCmd.Stderr = &compStderr
+	if err := compileCmd.Run(); err != nil {
+		result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+		result.Stderr = compStderr.String()
+		result.ExitCode = 1
+		return result, nil
+	}
+	result.CompileTimeMs = float64(time.Since(start).Microseconds()) / 1000
+	result.BinaryKB = e.BinarySize(binFile)
+
+	// Run
+	start = time.Now()
+	runCmd, cancelRun := e.buildCommand(binFile, nil, workDir)
+	defer cancelRun()
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr

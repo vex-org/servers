@@ -58,6 +58,54 @@ func cacheSet(key, code string) {
 	transpileCache[key] = cacheEntry{code: code, createdAt: time.Now()}
 }
 
+// --- Execution Results Cache ---
+
+type runCacheEntry struct {
+	result    *LangResult
+	createdAt time.Time
+}
+
+var (
+	runCache        = make(map[string]runCacheEntry)
+	runCacheMu      sync.RWMutex
+	runCacheTTL     = 24 * time.Hour
+	runCacheMaxSize = 1000
+)
+
+func runCacheKey(lang, optLevel, code string) string {
+	h := sha256.Sum256([]byte(lang + ":" + optLevel + ":" + code))
+	return hex.EncodeToString(h[:16])
+}
+
+func runCacheGet(key string) (*LangResult, bool) {
+	runCacheMu.RLock()
+	defer runCacheMu.RUnlock()
+	e, ok := runCache[key]
+	if !ok || time.Since(e.createdAt) > runCacheTTL {
+		return nil, false
+	}
+	res := *e.result
+	return &res, true
+}
+
+func runCacheSet(key string, res *LangResult) {
+	runCacheMu.Lock()
+	defer runCacheMu.Unlock()
+	if len(runCache) >= runCacheMaxSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range runCache {
+			if oldestKey == "" || v.createdAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.createdAt
+			}
+		}
+		delete(runCache, oldestKey)
+	}
+	resCopy := *res
+	runCache[key] = runCacheEntry{result: &resCopy, createdAt: time.Now()}
+}
+
 type CompareRequest struct {
 	Code     string   `json:"code"`
 	Langs    []string `json:"langs"`
@@ -83,6 +131,8 @@ type PresetCompareRequest struct {
 	GoCode   string `json:"go_code"`
 	RustCode string `json:"rust_code"`
 	ZigCode  string `json:"zig_code"`
+	CppCode  string `json:"cpp_code"`
+	CCode    string `json:"c_code"`
 	OptLevel string `json:"opt_level,omitempty"`
 }
 
@@ -119,11 +169,26 @@ func ComparePreset(c fiber.Ctx) error {
 	if req.ZigCode != "" {
 		jobs = append(jobs, langJob{"zig", req.ZigCode, executor.RunZig})
 	}
+	if req.CCode != "" {
+		jobs = append(jobs, langJob{"c", req.CCode, executor.RunC})
+	}
+	if req.CppCode != "" {
+		jobs = append(jobs, langJob{"cpp", req.CppCode, executor.RunCpp})
+	}
 
 	for _, j := range jobs {
 		wg.Add(1)
 		go func(j langJob) {
 			defer wg.Done()
+
+			key := runCacheKey(j.name, req.OptLevel, j.code)
+			if cached, ok := runCacheGet(key); ok {
+				mu.Lock()
+				results[j.name] = cached
+				mu.Unlock()
+				return
+			}
+
 			r, err := j.run(j.code, req.OptLevel)
 			mu.Lock()
 			defer mu.Unlock()
@@ -139,7 +204,7 @@ func ComparePreset(c fiber.Ctx) error {
 				results[j.name] = &LangResult{Error: errMsg, Code: j.code}
 				return
 			}
-			results[j.name] = &LangResult{
+			res := &LangResult{
 				TimeMs:        r.RunTimeMs,
 				CompileTimeMs: r.CompileTimeMs,
 				RunTimeMs:     r.RunTimeMs,
@@ -150,6 +215,8 @@ func ComparePreset(c fiber.Ctx) error {
 				Code:          j.code,
 				Stdout:        r.Stdout,
 			}
+			runCacheSet(key, res)
+			results[j.name] = res
 		}(j)
 	}
 
@@ -186,6 +253,15 @@ func Compare(c fiber.Ctx) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
+		key := runCacheKey("vex", req.OptLevel, req.Code)
+		if cached, ok := runCacheGet(key); ok {
+			mu.Lock()
+			results["vex"] = cached
+			mu.Unlock()
+			return
+		}
+
 		r, err := executor.RunVex(req.Code, req.OptLevel)
 		mu.Lock()
 		defer mu.Unlock()
@@ -201,7 +277,7 @@ func Compare(c fiber.Ctx) error {
 			results["vex"] = &LangResult{Error: errMsg, Code: req.Code}
 			return
 		}
-		results["vex"] = &LangResult{
+		res := &LangResult{
 			TimeMs:        r.RunTimeMs,
 			CompileTimeMs: r.CompileTimeMs,
 			RunTimeMs:     r.RunTimeMs,
@@ -212,6 +288,8 @@ func Compare(c fiber.Ctx) error {
 			Code:          req.Code,
 			Stdout:        r.Stdout,
 		}
+		runCacheSet(key, res)
+		results["vex"] = res
 	}()
 
 	// Transpile + run other languages via AI
@@ -225,6 +303,14 @@ func Compare(c fiber.Ctx) error {
 			if err != nil {
 				mu.Lock()
 				results[lang] = &LangResult{Error: "transpilation failed", Code: ""}
+				mu.Unlock()
+				return
+			}
+
+			key := runCacheKey(lang, req.OptLevel, transpiled)
+			if cached, ok := runCacheGet(key); ok {
+				mu.Lock()
+				results[lang] = cached
 				mu.Unlock()
 				return
 			}
@@ -254,7 +340,7 @@ func Compare(c fiber.Ctx) error {
 				results[lang] = &LangResult{Error: errMsg, Code: transpiled}
 				return
 			}
-			results[lang] = &LangResult{
+			res := &LangResult{
 				TimeMs:        r.RunTimeMs,
 				CompileTimeMs: r.CompileTimeMs,
 				RunTimeMs:     r.RunTimeMs,
@@ -265,6 +351,8 @@ func Compare(c fiber.Ctx) error {
 				Code:          transpiled,
 				Stdout:        r.Stdout,
 			}
+			runCacheSet(key, res)
+			results[lang] = res
 		}(lang)
 	}
 
@@ -284,7 +372,7 @@ Guidelines:
 1. Output ONLY valid, compilable code in the target language.
 2. Do NOT wrap the output in markdown code blocks (e.g., do not use ` + "```" + `zig or ` + "```" + `rust).
 3. Do NOT include any explanations, comments, or extra text.
-4. Match the target language's standard performance guidelines (e.g. for Zig, use std.io.getStdOut().writer() for print/output, ensure no unused imports or variables, and use @Vector/SIMD features where appropriate to match Vex's SIMD behavior).`
+4. Match the target language's standard performance guidelines (e.g. for Zig (v0.16.0), the entry point MUST be pub fn main(init: std.process.Init) !void and output must use try std.Io.File.stdout().writeStreamingAll(init.io, ...); ensure no unused imports or variables, and use @Vector/SIMD features where appropriate to match Vex's SIMD behavior).`
 
 // transpileViaAI uses AI to convert Vex code to another language (cached)
 func transpileViaAI(vexCode, targetLang string) (string, error) {

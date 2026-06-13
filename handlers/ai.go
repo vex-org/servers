@@ -45,7 +45,7 @@ func AIChat(system, user string) (string, error) {
 	return aiChat(system, user)
 }
 
-var vexSystemPrompt = `You are an expert Vex programming language assistant (Vex v0.4.0-rc.1, LLVM 22).
+var vexSystemPrompt = `You are an expert Vex programming language assistant (Vex v0.4.0-rc.26, LLVM 22).
 
 Vex = Rust safety + Go simplicity + automatic SIMD. "Every Cycle, Every Core, Every Time."
 
