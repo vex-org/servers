@@ -59,7 +59,7 @@ func NewExecutor(vexBin, sandboxBin string, sandboxEnabled bool) *Executor {
 		VexBinary:      vexBin,
 		SandboxBinary:  sandboxBin,
 		SandboxEnabled: sandboxEnabled,
-		Timeout:        10 * time.Second,
+		Timeout:        30 * time.Second,
 		MemoryLimitMB:  256,
 		TmpDir:         tmpDir,
 		VexVersion:     vexVersion,
