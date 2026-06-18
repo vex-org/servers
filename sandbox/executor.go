@@ -18,17 +18,18 @@ import (
 )
 
 type RunResult struct {
-	Stdout        string  `json:"stdout"`
-	Stderr        string  `json:"stderr"`
-	ExitCode      int     `json:"exit_code"`
-	CompileTimeMs float64 `json:"compile_time_ms"`
-	RunTimeMs     float64 `json:"run_time_ms"`
-	UserTimeMs    float64 `json:"user_time_ms"`
-	SysTimeMs     float64 `json:"sys_time_ms"`
-	MemoryKB      int64   `json:"memory_kb"`
-	BinaryKB      int64   `json:"binary_kb"`
-	TimedOut      bool    `json:"timed_out,omitempty"`
-	VexVersion    string  `json:"vex_version,omitempty"`
+	Stdout          string  `json:"stdout"`
+	Stderr          string  `json:"stderr"`
+	ExitCode        int     `json:"exit_code"`
+	CompileTimeMs   float64 `json:"compile_time_ms"`
+	RunTimeMs       float64 `json:"run_time_ms"`
+	UserTimeMs      float64 `json:"user_time_ms"`
+	SysTimeMs       float64 `json:"sys_time_ms"`
+	ExecutionTimeMs float64 `json:"execution_time_ms,omitempty"`
+	MemoryKB        int64   `json:"memory_kb"`
+	BinaryKB        int64   `json:"binary_kb"`
+	TimedOut        bool    `json:"timed_out,omitempty"`
+	VexVersion      string  `json:"vex_version,omitempty"`
 }
 
 type Executor struct {
@@ -145,6 +146,7 @@ func validOptLevel(level string) string {
 // Timing mirrors Go/Rust/Zig exactly: compile and run are separate processes;
 // UserTimeMs/SysTimeMs reflect only the final binary, not LLVM compilation.
 func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
+	code = injectVexTiming(code)
 	opt := validOptLevel(optLevel)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".vx")
 	if err != nil {
@@ -214,11 +216,13 @@ func (e *Executor) RunVex(code string, optLevel string) (*RunResult, error) {
 	result.Stdout = stdout.String()
 	result.Stderr = stderr.String()
 	result.VexVersion = e.VexVersion
+	parseExecutionTime(result)
 	return result, nil
 }
 
 // runVexJIT uses JIT mode (vex run) — no external linking needed
 func (e *Executor) runVexJIT(code string, opt string) (*RunResult, error) {
+	code = injectVexTiming(code)
 	subCmd := "run -" + opt
 	r, err := e.runCompiler(code, e.VexBinary, subCmd, ".vx")
 	if err != nil {
@@ -231,6 +235,7 @@ func (e *Executor) runVexJIT(code string, opt string) (*RunResult, error) {
 
 // runVexNoJIT falls back to vex run --no-jit for AOT execution in a single step
 func (e *Executor) runVexNoJIT(code string, opt string) (*RunResult, error) {
+	code = injectVexTiming(code)
 	subCmd := "run --no-jit -" + opt
 	r, err := e.runCompiler(code, e.VexBinary, subCmd, ".vx")
 	if err != nil {
@@ -287,6 +292,7 @@ func (e *Executor) EmitIR(code string, optLevel string) (*RunResult, error) {
 
 // RunGo compiles and runs Go code (separate compile + run for fair timing)
 func (e *Executor) RunGo(code string, optLevel string) (*RunResult, error) {
+	code = injectGoTiming(code)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".go")
 	if err != nil {
 		return nil, err
@@ -336,11 +342,13 @@ func (e *Executor) RunGo(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	parseExecutionTime(result)
 	return result, nil
 }
 
 // RunRust compiles and runs Rust code
 func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
+	code = injectRustTiming(code)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".rs")
 	if err != nil {
 		return nil, err
@@ -385,11 +393,13 @@ func (e *Executor) RunRust(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	parseExecutionTime(result)
 	return result, nil
 }
 
 // RunZig compiles and runs Zig code
 func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
+	code = injectZigTiming(code)
 	// Compatibility check for older Zig versions (e.g., 0.14.0 on the Ubuntu server)
 	zigVer := e.ToolVersions["zig"]
 	if zigVer == "" {
@@ -446,11 +456,13 @@ func (e *Executor) RunZig(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	parseExecutionTime(result)
 	return result, nil
 }
 
 // RunC compiles and runs C code
 func (e *Executor) RunC(code string, optLevel string) (*RunResult, error) {
+	code = injectCTiming(code)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".c")
 	if err != nil {
 		return nil, err
@@ -494,11 +506,13 @@ func (e *Executor) RunC(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	parseExecutionTime(result)
 	return result, nil
 }
 
 // RunCpp compiles and runs C++ code
 func (e *Executor) RunCpp(code string, optLevel string) (*RunResult, error) {
+	code = injectCppTiming(code)
 	workDir, srcFile, cleanup, err := e.writeSource(code, ".cpp")
 	if err != nil {
 		return nil, err
@@ -542,6 +556,7 @@ func (e *Executor) RunCpp(code string, optLevel string) (*RunResult, error) {
 	result.UserTimeMs, result.SysTimeMs, result.MemoryKB = extractProcessMetrics(runCmd)
 	result.Stdout = stdout.String()
 	result.Stderr = result.Stderr + stderr.String()
+	parseExecutionTime(result)
 	return result, nil
 }
 
@@ -610,6 +625,11 @@ func (e *Executor) writeSource(code, ext string) (workDir, srcFile string, clean
 
 func (e *Executor) buildCommand(bin string, args []string, workDir string) (*exec.Cmd, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.Timeout)
+
+	if strings.HasPrefix(bin, workDir) && runtime.GOOS == "linux" {
+		args = append([]string{"-f", "__max_rss_kb:%M", bin}, args...)
+		bin = "/usr/bin/time"
+	}
 
 	if e.SandboxEnabled {
 		nsjailArgs := []string{
@@ -708,4 +728,124 @@ func parseVexTiming(r *RunResult) {
 	// Also strip from stderr
 	r.Stderr = vexTimingLineRe.ReplaceAllString(r.Stderr, "")
 	r.Stderr = strings.TrimSpace(r.Stderr)
+	parseExecutionTime(r)
+}
+
+var executionTimeRe = regexp.MustCompile(`(?m)^__elapsed_ms:\s*([\d.eE+-]+)\s*\r?\n?`)
+var maxRssRe = regexp.MustCompile(`(?m)^__max_rss_kb:\s*(\d+)\s*\r?\n?`)
+
+func parseExecutionTime(r *RunResult) {
+	combined := r.Stdout + "\n" + r.Stderr
+	if m := executionTimeRe.FindStringSubmatch(combined); len(m) == 2 {
+		if val, err := strconv.ParseFloat(m[1], 64); err == nil {
+			r.ExecutionTimeMs = val
+		}
+	}
+	if m := maxRssRe.FindStringSubmatch(combined); len(m) == 2 {
+		if val, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			r.MemoryKB = val
+		}
+	}
+	r.Stdout = executionTimeRe.ReplaceAllString(r.Stdout, "")
+	r.Stderr = executionTimeRe.ReplaceAllString(r.Stderr, "")
+	r.Stdout = maxRssRe.ReplaceAllString(r.Stdout, "")
+	r.Stderr = maxRssRe.ReplaceAllString(r.Stderr, "")
+}
+
+func injectVexTiming(code string) string {
+	if !strings.Contains(code, "fn main") {
+		return code
+	}
+	header := `import { monotonicNow } from "time"
+struct __TimeGuard: $Drop {
+    start: u64
+}
+fn !(self: &__TimeGuard!) drop() {
+    let end = monotonicNow()
+    $println("__elapsed_ms:", ((end - self.start) as f64) / 1000000.0)
+}
+`
+	code = header + code
+	re := regexp.MustCompile(`(?m)^fn\s+main\s*\(\s*\)\s*(:\s*i32)?\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n    let! __guard = __TimeGuard { start: monotonicNow() }")
+	return code
+}
+
+func injectGoTiming(code string) string {
+	if !strings.Contains(code, "func main") {
+		return code
+	}
+	if !strings.Contains(code, `"time"`) && !strings.Contains(code, "`time`") {
+		code = strings.Replace(code, "package main", "package main\nimport \"time\"", 1)
+	}
+	re := regexp.MustCompile(`func\s+main\s*\(\s*\)\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n\t__start := time.Now()\n\tdefer func() {\n\t\tprintln(\"__elapsed_ms:\", float64(time.Since(__start).Nanoseconds())/1e6)\n\t}()")
+	return code
+}
+
+func injectRustTiming(code string) string {
+	if !strings.Contains(code, "fn main") {
+		return code
+	}
+	header := `struct __TimeGuard(std::time::Instant);
+impl Drop for __TimeGuard {
+    fn drop(&mut self) {
+        eprintln!("__elapsed_ms:{}", self.0.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+`
+	code = header + code
+	re := regexp.MustCompile(`fn\s+main\s*\(\s*\)\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n    let _guard = __TimeGuard(std::time::Instant::now());")
+	return code
+}
+
+func injectZigTiming(code string) string {
+	if !strings.Contains(code, "pub fn main") {
+		return code
+	}
+	re := regexp.MustCompile(`pub\s+fn\s+main\s*\([^)]*\)\s*(!\s*\w+)?\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n    const __start = std.Io.Clock.awake.now(init.io);\n    defer {\n        const __elapsed = __start.untilNow(init.io, .awake);\n        std.debug.print(\"__elapsed_ms:{d:.6}\\n\", .{@as(f64, @floatFromInt(__elapsed.toNanoseconds())) / 1e6});\n    }")
+	return code
+}
+
+func injectCTiming(code string) string {
+	if !strings.Contains(code, "main") {
+		return code
+	}
+	header := `#include <time.h>
+#include <stdio.h>
+static inline void __time_cleanup(struct timespec *start) {
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed = (end.tv_sec - start->tv_sec) * 1000.0 + (end.tv_nsec - start->tv_nsec) / 1000000.0;
+    printf("__elapsed_ms:%f\n", elapsed);
+}
+`
+	code = header + code
+	re := regexp.MustCompile(`int\s+main\s*\([^)]*\)\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n    struct timespec __start __attribute__((cleanup(__time_cleanup)));\n    clock_gettime(CLOCK_MONOTONIC, &__start);")
+	return code
+}
+
+func injectCppTiming(code string) string {
+	if !strings.Contains(code, "main") {
+		return code
+	}
+	header := `#include <chrono>
+#include <iostream>
+struct __TimeGuard {
+    std::chrono::high_resolution_clock::time_point start;
+    __TimeGuard() : start(std::chrono::high_resolution_clock::now()) {}
+    ~__TimeGuard() {
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        std::cout << "__elapsed_ms:" << elapsed.count() << "\n";
+    }
+};
+`
+	code = header + code
+	re := regexp.MustCompile(`int\s+main\s*\([^)]*\)\s*\{`)
+	code = re.ReplaceAllString(code, "$0\n    __TimeGuard __guard;")
+	return code
 }

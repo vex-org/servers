@@ -113,16 +113,17 @@ type CompareRequest struct {
 }
 
 type LangResult struct {
-	TimeMs        float64 `json:"time_ms"`
-	CompileTimeMs float64 `json:"compile_time_ms"`
-	RunTimeMs     float64 `json:"run_time_ms"`
-	UserTimeMs    float64 `json:"user_time_ms"`
-	SysTimeMs     float64 `json:"sys_time_ms"`
-	BinaryKB      int64   `json:"binary_kb"`
-	MemoryKB      int64   `json:"memory_kb"`
-	Code          string  `json:"code"`
-	Stdout        string  `json:"stdout,omitempty"`
-	Error         string  `json:"error,omitempty"`
+	TimeMs          float64 `json:"time_ms"`
+	CompileTimeMs   float64 `json:"compile_time_ms"`
+	RunTimeMs       float64 `json:"run_time_ms"`
+	UserTimeMs      float64 `json:"user_time_ms"`
+	SysTimeMs       float64 `json:"sys_time_ms"`
+	ExecutionTimeMs float64 `json:"execution_time_ms,omitempty"`
+	BinaryKB        int64   `json:"binary_kb"`
+	MemoryKB        int64   `json:"memory_kb"`
+	Code            string  `json:"code"`
+	Stdout          string  `json:"stdout,omitempty"`
+	Error           string  `json:"error,omitempty"`
 }
 
 // PresetCompareRequest accepts pre-written code for each language (no AI needed)
@@ -204,16 +205,21 @@ func ComparePreset(c fiber.Ctx) error {
 				results[j.name] = &LangResult{Error: errMsg, Code: j.code}
 				return
 			}
+			timeMs := r.RunTimeMs
+			if r.ExecutionTimeMs > 0 {
+				timeMs = r.ExecutionTimeMs
+			}
 			res := &LangResult{
-				TimeMs:        r.RunTimeMs,
-				CompileTimeMs: r.CompileTimeMs,
-				RunTimeMs:     r.RunTimeMs,
-				UserTimeMs:    r.UserTimeMs,
-				SysTimeMs:     r.SysTimeMs,
-				BinaryKB:      r.BinaryKB,
-				MemoryKB:      r.MemoryKB,
-				Code:          j.code,
-				Stdout:        r.Stdout,
+				TimeMs:          timeMs,
+				CompileTimeMs:   r.CompileTimeMs,
+				RunTimeMs:       r.RunTimeMs,
+				UserTimeMs:      r.UserTimeMs,
+				SysTimeMs:       r.SysTimeMs,
+				ExecutionTimeMs: r.ExecutionTimeMs,
+				BinaryKB:        r.BinaryKB,
+				MemoryKB:        r.MemoryKB,
+				Code:            j.code,
+				Stdout:          r.Stdout,
 			}
 			runCacheSet(key, res)
 			results[j.name] = res
@@ -277,16 +283,21 @@ func Compare(c fiber.Ctx) error {
 			results["vex"] = &LangResult{Error: errMsg, Code: req.Code}
 			return
 		}
+		timeMs := r.RunTimeMs
+		if r.ExecutionTimeMs > 0 {
+			timeMs = r.ExecutionTimeMs
+		}
 		res := &LangResult{
-			TimeMs:        r.RunTimeMs,
-			CompileTimeMs: r.CompileTimeMs,
-			RunTimeMs:     r.RunTimeMs,
-			UserTimeMs:    r.UserTimeMs,
-			SysTimeMs:     r.SysTimeMs,
-			BinaryKB:      r.BinaryKB,
-			MemoryKB:      r.MemoryKB,
-			Code:          req.Code,
-			Stdout:        r.Stdout,
+			TimeMs:          timeMs,
+			CompileTimeMs:   r.CompileTimeMs,
+			RunTimeMs:       r.RunTimeMs,
+			UserTimeMs:      r.UserTimeMs,
+			SysTimeMs:       r.SysTimeMs,
+			ExecutionTimeMs: r.ExecutionTimeMs,
+			BinaryKB:        r.BinaryKB,
+			MemoryKB:        r.MemoryKB,
+			Code:            req.Code,
+			Stdout:          r.Stdout,
 		}
 		runCacheSet(key, res)
 		results["vex"] = res
@@ -340,16 +351,21 @@ func Compare(c fiber.Ctx) error {
 				results[lang] = &LangResult{Error: errMsg, Code: transpiled}
 				return
 			}
+			timeMs := r.RunTimeMs
+			if r.ExecutionTimeMs > 0 {
+				timeMs = r.ExecutionTimeMs
+			}
 			res := &LangResult{
-				TimeMs:        r.RunTimeMs,
-				CompileTimeMs: r.CompileTimeMs,
-				RunTimeMs:     r.RunTimeMs,
-				UserTimeMs:    r.UserTimeMs,
-				SysTimeMs:     r.SysTimeMs,
-				BinaryKB:      r.BinaryKB,
-				MemoryKB:      r.MemoryKB,
-				Code:          transpiled,
-				Stdout:        r.Stdout,
+				TimeMs:          timeMs,
+				CompileTimeMs:   r.CompileTimeMs,
+				RunTimeMs:       r.RunTimeMs,
+				UserTimeMs:      r.UserTimeMs,
+				SysTimeMs:       r.SysTimeMs,
+				ExecutionTimeMs: r.ExecutionTimeMs,
+				BinaryKB:        r.BinaryKB,
+				MemoryKB:        r.MemoryKB,
+				Code:            transpiled,
+				Stdout:          r.Stdout,
 			}
 			runCacheSet(key, res)
 			results[lang] = res
