@@ -62,12 +62,12 @@ case "$ARCH" in
 esac
 
 # Fetch latest release tag (includes pre-releases: rc, alpha, beta)
-LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=1" \
-    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//') || true
+LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/tags?per_page=1" \
+    | grep '"name"' | head -1 | sed 's/.*"name": *"//;s/".*//') || true
 
-# Fallback to /releases/latest if list endpoint fails
+# Fallback to /releases if tags endpoint fails
 if [ -z "$LATEST" ]; then
-    LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" \
+    LATEST=$(curl -sf --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=1" \
         | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//') || true
 fi
 
